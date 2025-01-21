@@ -131,6 +131,34 @@ class Gaussian1D(ToyDataset):
 
         return data
 
+class UnbalancedGaussian2D(ToyDataset):
+
+
+    def __init__(self, size, stdev=1., random_state=1234):
+        super(UnbalancedGaussian2D, self).__init__(size, stdev, random_state)
+        self.stdev = stdev
+
+    def _sample(self):
+        # Parameters for the two Gaussian modes
+        mean1 = [0, 0]  # Mean of the first Gaussian
+        cov1 = [[1, 0], [0., 1]]  # Covariance of the first Gaussian
+
+        mean2 = [6, 6]  # Mean of the second Gaussian
+        cov2 = [[1, 0.], [0., 1]]  # Covariance of the second Gaussian
+
+        rng = np.random.default_rng(self.random_state)
+        # Generate data points with an unbalanced number of samples
+        n_samples1 = 0.8
+        n_samples2 = 0.2
+
+        data1 = np.random.multivariate_normal(mean1, cov1, int(n_samples1*self.size))
+        data2 = np.random.multivariate_normal(mean2, cov2, int(n_samples2*self.size))
+
+        # Combine the datasets
+        data = np.vstack((data1, data2)).astype(np.float32)
+
+        return data
+
 
 class SwissRoll(ToyDataset):
     """
@@ -211,6 +239,7 @@ class DataStreamer:
             "swissroll": SwissRoll,
             "gaussian1d": Gaussian1D,
             "gaussian25_rotated": Gaussian25_Rotated,
+            "UnbalancedGaussian2D": UnbalancedGaussian2D,
         }.get(dataset, None)
 
 

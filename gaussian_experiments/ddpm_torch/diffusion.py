@@ -99,6 +99,12 @@ class GaussianDiffusion:
         return coef1 * x_0 + coef2 * noise
 
     def q_posterior_mean_var(self, x_0, x_t, t):
+        """
+        q(x_{t - 1} | x_t, x_0)
+        Equation 6, 7 in Denoising Diffusion Probabilistic Models,
+        https://proceedings.neurips.cc/paper/2020/hash/4c5bcfec8584af0d967f1ab10179ca4b-Abstract.html
+
+        """
         posterior_mean_coef1 = self._extract(self.posterior_mean_coef1, t, x_0)
         posterior_mean_coef2 = self._extract(self.posterior_mean_coef2, t, x_0)
         posterior_mean = posterior_mean_coef1 * x_0 + posterior_mean_coef2 * x_t
@@ -107,8 +113,13 @@ class GaussianDiffusion:
         return posterior_mean, posterior_var, posterior_logvar
 
     def p_mean_var(self, denoise_fn, x_t, t, clip_denoised, return_pred):
+        """
+        input is x_t, t
+        output x_{t-1} ~ p(x_{t-1} | x_t)
+
+        """
         B, C, H, W = x_t.shape
-        out = denoise_fn(x_t, t)
+        out = denoise_fn(x_t, t) # \epsilon(x_t, t)
 
         if self.model_var_type == "learned":
             assert all(out.shape == (B, 2 * C, H, W))
@@ -145,6 +156,9 @@ class GaussianDiffusion:
         return mean / coef1 - coef2 / coef1 * x_t
 
     def _pred_x_0_from_eps(self, x_t, eps, t):
+        """
+        x_0 = 1 / \sqrt(\bar \alpha_t) x_t  - \sqrt(1 / \bar\alpha_t - 1) \eps
+        """
         coef1 = self._extract(self.sqrt_recip_alphas_bar, t, x_t)
         coef2 = self._extract(self.sqrt_recip_m1_alphas_bar, t, x_t)
         return coef1 * x_t - coef2 * eps
@@ -152,6 +166,10 @@ class GaussianDiffusion:
     # === sample ===
 
     def p_sample_step(self, denoise_fn, x_t, t, clip_denoised=True, return_pred=False, generator=None):
+        '''
+        input: x_t, t
+        output: x_{t - 1}
+        '''
         model_mean, _, model_logvar, pred_x_0 = self.p_mean_var(
             denoise_fn, x_t, t, clip_denoised=clip_denoised, return_pred=True)
         noise = torch.empty_like(x_t).normal_(generator=generator)

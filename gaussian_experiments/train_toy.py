@@ -13,8 +13,8 @@ def parse_arguments():
     parser = ArgumentParser()
 
     parser.add_argument("--dataset", choices=["gaussian1d", "gaussian8", "gaussian25", "swissroll", 
-                                               "gaussian25_rotated"], default="gaussian25")
-    parser.add_argument("--size", default=100000, type=int)
+                                               "gaussian25_rotated", "UnbalancedGaussian2D"], default="UnbalancedGaussian2D")
+    parser.add_argument("--size", default=200000, type=int)
     parser.add_argument("--root", default="~/datasets", type=str, help="root directory of datasets")
     parser.add_argument("--epochs", default=300, type=int, help="total number of training epochs")
     parser.add_argument("--lr", default=0.001, type=float, help="learning rate")
@@ -37,7 +37,7 @@ def parse_arguments():
     parser.add_argument("--eval-intv", default=10, type=int)
     parser.add_argument("--seed", default=1234, type=int, help="random seed")
     parser.add_argument("--resume", action="store_true", help="to resume training from a checkpoint")
-    parser.add_argument("--device", default="cuda:0", type=str)
+    parser.add_argument("--device", default="mps", type=str)
     parser.add_argument("--mid-features", default=128, type=int)
     parser.add_argument("--num-temporal-layers", default=3, type=int)
 
@@ -45,10 +45,10 @@ def parse_arguments():
     parser.add_argument('--modes', type=int, nargs='+', help='Means of the Gaussians (for 1D only)', default=[1, 2, 3])
  
     parser.add_argument("--generations", default=1, type=int)
-    parser.add_argument("--num_sample_images", default=10_000_000, type=int)
+    parser.add_argument("--num_sample_images", default=10_000, type=int)
  
-    parser.add_argument("--wandb_project_name", default="synthetic", type=str)
-    parser.add_argument("--wandb_entity", default="cmu-research", type=str)
+    parser.add_argument("--wandb_project_name", default="ddpm_hallucination", type=str)
+    parser.add_argument("--wandb_entity", default="haitongma", type=str)
     parser.add_argument("--log_results", action="store_true", help="log results to wandb")
 
     args = parser.parse_args()
@@ -90,7 +90,7 @@ def main():
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
 
-    for gen in range(args.generations): 
+    for gen in range(args.generations):
         if args.log_results:
             wandb.log({'gen':gen})
         print("Generation: ", gen)
@@ -183,7 +183,7 @@ def main():
         max_eval_count = max(args.num_sample_images, data_size)#min(data_size, data_size)
         print("Max eval count: ", max_eval_count)
         # eval_batch_size = min(max_eval_count, 30000)
-        eval_batch_size = min(max_eval_count, 1_000_000)
+        eval_batch_size = min(max_eval_count, 10_000)
         print("Eval batch size: ", eval_batch_size)
         xlim, ylim = infer_range(trainloader.dataset)
         value_range = (xlim, ylim)
