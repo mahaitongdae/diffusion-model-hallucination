@@ -46,6 +46,7 @@ class GaussianDiffusion:
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
+        self.sampling_dist = kwargs.get('sampling_dist')
 
         self.timesteps = len(betas)
         print("Timesteps:", self.timesteps)
@@ -97,6 +98,13 @@ class GaussianDiffusion:
         coef1 = self._extract(self.sqrt_alphas_bar, t, x_0)
         coef2 = self._extract(self.sqrt_one_minus_alphas_bar, t, x_0)
         return coef1 * x_0 + coef2 * noise
+
+    def reverse_sample(self, x_t, t, noise=None):
+        if noise is None:
+            noise = torch.randn_like(x_t)
+        coef1 = self._extract(self.sqrt_recip_alphas_bar, t, x_t)
+        coef2 = self._extract(self.sqrt_recip_m1_alphas_bar, t, x_t)
+        return coef1 * x_t - coef2 * noise
 
     def q_posterior_mean_var(self, x_0, x_t, t):
         """
@@ -179,6 +187,21 @@ class GaussianDiffusion:
 
     @torch.inference_mode()
     def p_sample(self, denoise_fn, shape=None, device=torch.device("cpu"), noise=None, seed=None):
+        B = (shape or noise.shape)[0]
+        t = torch.empty((B, ), dtype=torch.int64, device=device)
+        rng = None
+        if seed is not None:
+            rng = torch.Generator(device).manual_seed(seed)
+        if noise is None:
+            x_t = torch.empty(shape, device=device).normal_(generator=rng)
+        else:
+            x_t = noise.to(device)
+        for ti in range(self.timesteps - 1, -1, -1):
+            t.fill_(ti)
+            x_t = self.p_sample_step(denoise_fn, x_t, t, generator=rng)
+        return x_t
+
+    def p_sample_grad(self, denoise_fn, shape=None, device=torch.device("cpu"), noise=None, seed=None):
         B = (shape or noise.shape)[0]
         t = torch.empty((B, ), dtype=torch.int64, device=device)
         rng = None
@@ -278,10 +301,26 @@ class GaussianDiffusion:
                 raise NotImplementedError(self.model_mean_type)
             model_out = denoise_fn(x_t, t)
             losses = flat_mean((target - model_out).pow(2))
+        elif self.loss_type == "rssm":
+            noise_2 = torch.randn_like(x_0)
+            if self.sampling_dist == 'uniform':
+                # x_t =
+                sample_xt = torch.rand_like(x_0) * 10 - 5
+            elif self.sampling_dist == 'Gaussian':
+                sample_xt = torch.randn_like(x_0) * 3
+            elif self.sampling_dist == 'pt':
+                sample_xt = x_t.clone()
+            else:
+                raise NotImplementedError
+            tilde_x_0 = self.reverse_sample(sample_xt, t, noise=noise_2)
+            energy = 100 * (0.8 * torch.exp(- torch.linalg.norm(tilde_x_0 - 3 * torch.ones_like(x_t), axis=1) ** 2 / 2)
+                  + 0.2 * torch.exp(- torch.linalg.norm(tilde_x_0 + 3 * torch.ones_like(x_t), axis=1) ** 2 /2 ))
+            model_out = denoise_fn(sample_xt, t)
+            losses = energy * flat_mean((noise_2 - model_out).pow(2))
         else:
             raise NotImplementedError(self.loss_type)
 
-        return losses
+        return losses, torch.linalg.norm(model_out, axis=1).mean().item()
 
     def _prior_bpd(self, x_0):
         B, T = len(x_0), self.timesteps

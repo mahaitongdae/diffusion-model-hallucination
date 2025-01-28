@@ -54,14 +54,15 @@ class Trainer:
         t = torch.randint(T, size=(B, ), dtype=torch.int64, device=self.device)
         if len(x.shape)==1:
             x = x.unsqueeze(1)
-        loss = self.diffusion.train_losses(self.model, x_0=x, t=t)
+        loss, model_out_norm = self.diffusion.train_losses(self.model, x_0=x, t=t)
         assert loss.shape == (B, )
-        return loss
+        return loss, model_out_norm
 
     def step(self, x):
         # X has shape (1000, 2)
         B = x.shape[0]
-        loss = self.loss(x).mean()
+        loss, model_out_norm = self.loss(x)
+        loss = loss.mean()
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
         # gradient clipping by global norm
@@ -70,7 +71,11 @@ class Trainer:
         self.optimizer.step()
         self.stats.update(B, loss=loss.item() * B)
         if self.args.log_results:
-            wandb.log({"loss": loss.item()})
+            wandb.log({"loss": loss.item(),
+                       "model_out_norm": model_out_norm,})
+
+
+
 
     def train(self, evaluator=None, chkpt_path=None, image_dir=None, **plot_kwargs):
 
@@ -103,6 +108,7 @@ class Trainer:
                             plt.yscale("log")
                             plt.hist(x_gen, bins=100, alpha=0.7, edgecolor='black')
                             plt.tight_layout()
+
                             plt.savefig(os.path.join(image_dir, f"{e + 1}.jpg"))
                             plt.close()
                         else:

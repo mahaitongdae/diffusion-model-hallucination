@@ -22,14 +22,15 @@ def parse_arguments():
     parser.add_argument("--beta2", default=0.999, type=float, help="beta_2 in Adam")
     parser.add_argument("--lr-warmup", default=0, type=int, help="number of warming-up epochs")
     parser.add_argument("--batch-size", default=10000, type=int)
-    parser.add_argument("--timesteps", default=1000, type=int, help="number of diffusion steps")
+    parser.add_argument("--timesteps", default=20, type=int, help="number of diffusion steps")
 
     parser.add_argument("--beta-schedule", choices=["quad", "linear", "warmup10", "warmup50", "jsd"], default="linear") 
     parser.add_argument("--beta-start", default=0.001, type=float)
-    parser.add_argument("--beta-end", default=0.2, type=float)
+    parser.add_argument("--beta-end", default=0.3, type=float)
     parser.add_argument("--model-mean-type", choices=["mean", "x_0", "eps"], default="eps", type=str)
     parser.add_argument("--model-var-type", choices=["learned", "fixed-small", "fixed-large"], default="fixed-large", type=str)  # noqa
-    parser.add_argument("--loss-type", choices=["kl", "mse"], default="mse", type=str)
+    parser.add_argument("--loss-type", choices=["kl", "mse", "rssm"], default="mse", type=str)
+    parser.add_argument("--sampling_dist", choices=["uniform", "pt", "Gaussian"], default="Gaussian", type=str)
     parser.add_argument("--image-dir", default="./images/train", type=str)
     parser.add_argument("--exp_str", default="0", type=str)
     parser.add_argument("--chkpt-dir", default="./chkpts", type=str)
@@ -37,7 +38,7 @@ def parse_arguments():
     parser.add_argument("--eval-intv", default=10, type=int)
     parser.add_argument("--seed", default=1234, type=int, help="random seed")
     parser.add_argument("--resume", action="store_true", help="to resume training from a checkpoint")
-    parser.add_argument("--device", default="mps", type=str)
+    parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--mid-features", default=128, type=int)
     parser.add_argument("--num-temporal-layers", default=3, type=int)
 
@@ -49,7 +50,7 @@ def parse_arguments():
  
     parser.add_argument("--wandb_project_name", default="ddpm_hallucination", type=str)
     parser.add_argument("--wandb_entity", default="haitongma", type=str)
-    parser.add_argument("--log_results", action="store_true", help="log results to wandb")
+    parser.add_argument("--log_results", default=False, action="store_true", help="log results to wandb")
 
     args = parser.parse_args()
     return args
@@ -64,17 +65,14 @@ def main():
     else:
         dataset_name = args.dataset
     args.store_name = "_".join([
-        dataset_name, str(args.size), "g",str(args.generations),"e",str(args.epochs), f"t{args.timesteps}", f"m{args.mid_features}",
-        f"nl{args.num_temporal_layers}", f"b{args.beta_schedule}",
-        f"seed{args.seed}", args.exp_str
+        dataset_name, str(args.size), f"{args.loss_type}", f"{args.sampling_dist}", args.exp_str
     ])
     # set seed
     seed_all(args.seed)
     print(args)
 
     if args.log_results:
-        wandb.init(project=args.wandb_project_name,
-                                   entity=args.wandb_entity, name=args.store_name)
+        wandb.init(project=args.wandb_project_name, name=args.store_name) # entity=args.wandb_entity
         wandb.config.update(args)
         wandb.run.log_code(".")
 
@@ -90,136 +88,151 @@ def main():
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
 
-    for gen in range(args.generations):
-        if args.log_results:
-            wandb.log({'gen':gen})
-        print("Generation: ", gen)
-        if gen==0:
-            trainloader = DataStreamer(dataset, batch_size=batch_size, num_batches=num_batches, modes=args.modes)
-            print("Max and Min of dataset: ", np.max(trainloader.dataset.data), np.min(trainloader.dataset.data))
-            np.save(f"{chkpt_dir}/real_dataset.npy", trainloader.dataset.data)
-        else:
-            dataset_gen = np.load(f"{args.chkpt_dir}/{args.store_name}/gen_dataset_{gen-1}.npy")
-            print("Dataset Gen: ", dataset_gen.shape)
-            trainloader = DataStreamer(dataset_gen, batch_size=batch_size, num_batches=num_batches, modes=args.modes)
+    # for gen in range(args.generations):
+    #     if args.log_results:
+    #         wandb.log({'gen':gen})
+    #     print("Generation: ", gen)
+    #     if gen==0:
+    #         trainloader = DataStreamer(dataset, batch_size=batch_size, num_batches=num_batches, modes=args.modes)
+    #         print("Max and Min of dataset: ", np.max(trainloader.dataset.data), np.min(trainloader.dataset.data))
+    #         np.save(f"{chkpt_dir}/real_dataset.npy", trainloader.dataset.data)
+    #     else:
+    #         dataset_gen = np.load(f"{args.chkpt_dir}/{args.store_name}/gen_dataset_{gen-1}.npy")
+    #         print("Dataset Gen: ", dataset_gen.shape)
+    #         trainloader = DataStreamer(dataset_gen, batch_size=batch_size, num_batches=num_batches, modes=args.modes)
+    trainloader = DataStreamer(dataset, batch_size=batch_size, num_batches=num_batches, modes=args.modes)
+    print("Max and Min of dataset: ", np.max(trainloader.dataset.data), np.min(trainloader.dataset.data))
+    np.save(f"{chkpt_dir}/real_dataset.npy", trainloader.dataset.data)
 
-        # training parameters
-        device = torch.device(args.device)
-        epochs = args.epochs
+    # training parameters
+    device = torch.device(args.device)
+    epochs = args.epochs
 
-        # diffusion parameters
-        beta_schedule = args.beta_schedule
-        beta_start, beta_end = args.beta_start, args.beta_end
-        timesteps = args.timesteps
-        betas = get_beta_schedule(
-            beta_schedule, beta_start=beta_start, beta_end=beta_end, timesteps=timesteps)
-        model_mean_type = args.model_mean_type
-        model_var_type = args.model_var_type
-        loss_type = args.loss_type
-        diffusion = GaussianDiffusion(
-            betas=betas, model_mean_type=model_mean_type, model_var_type=model_var_type, loss_type=loss_type)
+    # diffusion parameters
+    beta_schedule = args.beta_schedule
+    beta_start, beta_end = args.beta_start, args.beta_end
+    timesteps = args.timesteps
+    betas = get_beta_schedule(
+        beta_schedule, beta_start=beta_start, beta_end=beta_end, timesteps=timesteps)
+    model_mean_type = args.model_mean_type
+    model_var_type = args.model_var_type
+    loss_type = args.loss_type
+    diffusion = GaussianDiffusion(
+        betas=betas, model_mean_type=model_mean_type, model_var_type=model_var_type, loss_type=loss_type,
+        sampling_dist=args.sampling_dist)
 
-        # model parameters
-        out_features = 2 * in_features if model_var_type == "learned" else in_features
-        mid_features = args.mid_features
-        model = Decoder(in_features, mid_features, args.num_temporal_layers)
-        model.to(device)
+    # model parameters
+    out_features = 2 * in_features if model_var_type == "learned" else in_features
+    mid_features = args.mid_features
+    model = Decoder(in_features, mid_features, args.num_temporal_layers)
+    model.to(device)
 
-        # training parameters
-        lr = args.lr
-        beta1, beta2 = args.beta1, args.beta2
-        optimizer = Adam(model.parameters(), lr=lr, betas=(beta1, beta2))
+    # training parameters
+    lr = args.lr
+    beta1, beta2 = args.beta1, args.beta2
+    optimizer = Adam(model.parameters(), lr=lr, betas=(beta1, beta2))
 
-        # checkpoint path
-        chkpt_dir = args.chkpt_dir + f"/{args.store_name}"
-        if not os.path.exists(chkpt_dir):
-            os.makedirs(chkpt_dir)
-        chkpt_path = os.path.join(chkpt_dir, f"ddpm_{dataset}_gen_{gen}.pt")
+    # checkpoint path
+    chkpt_dir = args.chkpt_dir + f"/{args.store_name}"
+    if not os.path.exists(chkpt_dir):
+        os.makedirs(chkpt_dir)
+    chkpt_path = os.path.join(chkpt_dir, f"ddpm_{dataset}_gen_0.pt")
 
-        # set up image directory
-        image_dir = os.path.join(args.image_dir, f"{dataset}", args.store_name)
-        if not os.path.exists(image_dir):
-            os.makedirs(image_dir)
+    # set up image directory
+    image_dir = os.path.join(args.image_dir, f"{dataset}", args.store_name)
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir)
 
-        # scheduler
-        warmup = args.lr_warmup
-        scheduler = lr_scheduler.LambdaLR(
-            optimizer, lr_lambda=lambda t: min((t + 1) / warmup, 1.0)) if warmup > 0 else None
+    # scheduler
+    warmup = args.lr_warmup
+    scheduler = lr_scheduler.LambdaLR(
+        optimizer, lr_lambda=lambda t: min((t + 1) / warmup, 1.0)) if warmup > 0 else None
 
-        # load trainer
-        grad_norm = 0  # gradient global clipping is disabled
-        eval_intv = args.eval_intv
-        chkpt_intv = args.chkpt_intv
-        trainer = Trainer(
-            model=model,
-            optimizer=optimizer,
-            diffusion=diffusion,
-            epochs=epochs,
-            trainloader=trainloader,
-            scheduler=scheduler,
-            grad_norm=grad_norm,
-            device=device,
-            eval_intv=eval_intv,
-            chkpt_intv=chkpt_intv, gen=gen,args=args
-        )
+    # load trainer
+    grad_norm = 0  # gradient global clipping is disabled
+    eval_intv = args.eval_intv
+    chkpt_intv = args.chkpt_intv
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        diffusion=diffusion,
+        epochs=epochs,
+        trainloader=trainloader,
+        scheduler=scheduler,
+        grad_norm=grad_norm,
+        device=device,
+        eval_intv=eval_intv,
+        chkpt_intv=chkpt_intv, gen=0, args=args
+    )
 
-        print("Len of trainloader: ", len(trainloader))
-        print("Data size: ", data_size)
-        plt.figure(figsize=(6, 6))
-        dataloader_dataset = trainloader.dataset
-        if in_features==1:
-            # Visualize histogram in case of 1D input.
-            # Set log scale
-            plt.yscale("log")
-            plt.hist(dataloader_dataset.data, bins=100, alpha=0.7, edgecolor='black')
-        else:
-            plt.scatter(*np.hsplit(dataloader_dataset.data, 2), s=0.5, alpha=0.7)
-        plt.tight_layout()
-        plt.savefig(f"{image_dir}/gen_{gen}.jpg")
-        plt.close()
+    print("Len of trainloader: ", len(trainloader))
+    print("Data size: ", data_size)
+    plt.figure(figsize=(3, 3))
+    dataloader_dataset = trainloader.dataset
+    if in_features==1:
+        # Visualize histogram in case of 1D input.
+        # Set log scale
+        plt.yscale("log")
+        plt.hist(dataloader_dataset.data, bins=100, alpha=0.7, edgecolor='black')
+    else:
+        plt.scatter(*np.hsplit(next(iter(trainloader))[:2000], 2), s=0.5, alpha=0.7)
+
+    plt.title('True data dist')
+    plt.grid(True)
+    plt.axis('equal')
+    plt.tight_layout()
+    plt.savefig(f"{image_dir}/gen.jpg")
+    plt.close()
 
 
-        # max_eval_count = min(data_size, 30000)
-        max_eval_count = max(args.num_sample_images, data_size)#min(data_size, data_size)
-        print("Max eval count: ", max_eval_count)
-        # eval_batch_size = min(max_eval_count, 30000)
-        eval_batch_size = min(max_eval_count, 10_000)
-        print("Eval batch size: ", eval_batch_size)
-        xlim, ylim = infer_range(trainloader.dataset)
-        value_range = (xlim, ylim)
-        true_data = iter(trainloader)
-        if in_features==1:
-            evaluator = Evaluator1D(
-                true_data=np.concatenate([
-                    next(true_data) for _ in range(min(max_eval_count // eval_batch_size, args.size//args.batch_size))
-                ]), eval_batch_size=eval_batch_size, max_eval_count=max_eval_count, value_range=value_range)
-        else:
-            evaluator = Evaluator(
-                true_data=np.concatenate([
-                    next(true_data) for _ in range(max_eval_count // eval_batch_size)
-                ]), eval_batch_size=eval_batch_size, max_eval_count=max_eval_count, value_range=value_range)
-        if args.resume:
-            try:
-                trainer.load_checkpoint(chkpt_path)
-            except FileNotFoundError:
-                print("Checkpoint file does not exist!")
-                print("Starting from scratch...")
+    # max_eval_count = min(data_size, 30000)
+    max_eval_count = 2000 # max(args.num_sample_images, data_size)#min(data_size, data_size)
+    print("Max eval count: ", max_eval_count)
+    # eval_batch_size = min(max_eval_count, 30000)
+    eval_batch_size = 1000
+    print("Eval batch size: ", eval_batch_size)
+    xlim, ylim = infer_range(trainloader.dataset)
+    value_range = (xlim, ylim)
+    true_data = iter(trainloader)
+    if in_features==1:
+        evaluator = Evaluator1D(
+            true_data=np.concatenate([
+                next(true_data) for _ in range(min(max_eval_count // eval_batch_size, args.size//args.batch_size))
+            ]), eval_batch_size=eval_batch_size, max_eval_count=max_eval_count, value_range=value_range)
+    else:
+        evaluator = Evaluator(
+            true_data=np.concatenate([
+                next(true_data) for _ in range(max_eval_count // eval_batch_size)
+            ]), eval_batch_size=eval_batch_size, max_eval_count=max_eval_count, value_range=value_range)
+    if args.resume:
+        try:
+            trainer.load_checkpoint(chkpt_path)
+        except FileNotFoundError:
+            print("Checkpoint file does not exist!")
+            print("Starting from scratch...")
 
-        gen_dataset = trainer.train(evaluator, chkpt_path=chkpt_path, image_dir=image_dir, xlim=xlim, ylim=ylim)
-        np.save(f"{chkpt_dir}/gen_dataset_{gen}.npy", gen_dataset)
-        print(gen_dataset.shape)
-        if "1d" in args.dataset:
-            # Set log scale
-            plt.yscale("log")
-            plt.hist(gen_dataset, bins=100, alpha=0.7, edgecolor='black')
-        else:
-            plt.scatter(*np.hsplit(gen_dataset, 2), s=0.5, alpha=0.7)
-        plt.tight_layout()
-        plt.savefig(f"{chkpt_dir}/generated_{gen}.jpg")
-        plt.close()
+    gen_dataset = trainer.train(evaluator, chkpt_path=chkpt_path, image_dir=image_dir, xlim=xlim, ylim=ylim)
+    np.save(f"{chkpt_dir}/gen_dataset.npy", gen_dataset)
+    print(gen_dataset.shape)
+    plt.figure(figsize=(3, 3))
+    if "1d" in args.dataset:
+        # Set log scale
+        plt.yscale("log")
+        plt.hist(gen_dataset, bins=100, alpha=0.7, edgecolor='black')
+    else:
+        plt.scatter(*np.hsplit(gen_dataset, 2), s=0.5, alpha=0.7)
+    plt.title(f'RSSM w/ {args.sampling_dist} sample')
+    plt.xlim([-6, 6])
+    plt.ylim([-6, 6])
+    plt.grid(True)
+    plt.xticks(np.array([-6, -3, 0, 3, 6]))
+    plt.yticks(np.array([-6, -3, 0, 3, 6]))
+    plt.savefig(f"{chkpt_dir}/generated.pdf")
+    plt.close()
 
-        if args.log_results:
-            wandb.log({f"Gen": wandb.Image(f"{chkpt_dir}/generated_{gen}.jpg", caption=f"Gen {gen + 1}")})
+    if args.log_results:
+        wandb.log({f"Gen": wandb.Image(f"{chkpt_dir}/generated.jpg", caption=f"Gen 0")})
+
 
 if __name__ == "__main__":
     main()

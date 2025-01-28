@@ -140,10 +140,10 @@ class UnbalancedGaussian2D(ToyDataset):
 
     def _sample(self):
         # Parameters for the two Gaussian modes
-        mean1 = [0, 0]  # Mean of the first Gaussian
+        mean1 = [3, 3]  # Mean of the first Gaussian
         cov1 = [[1, 0], [0., 1]]  # Covariance of the first Gaussian
 
-        mean2 = [6, 6]  # Mean of the second Gaussian
+        mean2 = [-3, -3]  # Mean of the second Gaussian
         cov2 = [[1, 0.], [0., 1]]  # Covariance of the second Gaussian
 
         rng = np.random.default_rng(self.random_state)
@@ -156,6 +156,7 @@ class UnbalancedGaussian2D(ToyDataset):
 
         # Combine the datasets
         data = np.vstack((data1, data2)).astype(np.float32)
+        np.random.shuffle(data)
 
         return data
 

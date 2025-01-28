@@ -6,6 +6,18 @@ from ..functions import normal_kl, continuous_gaussian_loglik, flat_mean
 
 class GaussianDiffusion(diffusion.GaussianDiffusion):
 
+
+    def get_true_score_unbalanced_gmm(self, x_t, t):
+        x_t = x_t.detach_().requires_grad_(True)
+        energy = torch.log(0.8 * torch.exp(- torch.linalg.norm(x_t - 1.5 * torch.ones_like(x_t), axis=1) ** 2 / 2)
+                  + 0.2 * torch.exp(- torch.linalg.norm(x_t + 1.5 * torch.ones_like(x_t), axis=1) ** 2 /2))
+        score = torch.autograd.grad(energy.sum(), x_t)[0]
+        scale = self._extract(self.sqrt_one_minus_alphas_bar, t, x_t)
+        return - scale * score
+
+
+
+
     def q_sample(self, x_0, t, noise=None):
         if noise is None:
             noise = torch.randn_like(x_0)

@@ -78,7 +78,7 @@ def infer_range(dataset):
 def save_scatterplot(fpath, x, y=None, xlim=None, ylim=None):
     if hasattr(x, "ndim"):
         x, y = split_squeeze(x) if x.ndim == 2 else (np.arange(len(x)), x)
-    plt.figure(figsize=(6, 6))
+    plt.figure(figsize=(3, 3))
     plt.scatter(x, y, s=0.5, alpha=0.7)
 
     # set axes limits
