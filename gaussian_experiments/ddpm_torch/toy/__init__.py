@@ -1,4 +1,4 @@
-from .diffusion import GaussianDiffusion
+from .diffusion import GaussianDiffusion, EDMDiffusion
 from .toy_data import DataStreamer
 from .toy_model import Decoder
 from .toy_utils import Trainer, Evaluator, Evaluator1D
@@ -8,6 +8,7 @@ from .toy_data import Gaussian1D
 
 __all__ = [
     "GaussianDiffusion",
+    "EDMDiffusion",
     "get_beta_schedule",
     "DataStreamer",
     "Decoder",
