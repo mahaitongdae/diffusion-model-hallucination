@@ -2,11 +2,13 @@ import numpy as np
 from ddpm_torch.toy import *
 import matplotlib.pyplot as plt
 import torch
+from pathlib import Path
+from scipy.stats import entropy
 
 if __name__ == '__main__':
     model_path = '/home/haitong/PycharmProjects/diffusion-model-hallucination/gaussian_experiments/chkpts/edm_UnbalancedGaussian2D_200000_rssm_uniform_0/ddpm_UnbalancedGaussian2D_gen_0.pt'
     # replace with model_path
-
+    true_data = np.load(Path(model_path).parent / 'real_dataset.npy')
     trainloader = DataStreamer("UnbalancedGaussian2D", batch_size=10000, num_batches=2, modes=2)
     evaluator = Evaluator(
         true_data=np.concatenate([
@@ -70,7 +72,25 @@ if __name__ == '__main__':
     y_hist_ax.tick_params(axis='y', which='both', labelleft=False)
     y_hist_ax.set_xticks([0.2, 0.8])
 
-    # plt.suptitle('Langevin dynamics sample \n with true score function')
+
+
+    bins = 50
+    hist1, bin_edges = np.histogram(gen_data, bins=bins, density=True)
+    hist2, _ = np.histogram(true_data, bins=bin_edges, density=True)
+
+    # Avoid division by zero
+    hist1 += 1e-10
+    hist2 += 1e-10
+
+    # Normalize histograms to get probabilities
+    prob1 = hist1 / np.sum(hist1)
+    prob2 = hist2 / np.sum(hist2)
+
+    # Compute KL divergence
+    kl_divergence = entropy(prob1, prob2)
+    print("KL Divergence:", kl_divergence)
+
+    plt.suptitle('KL Divergence: {:.3f}'.format(kl_divergence))
 
     # Adjust the layout to avoid overlaps
     plt.tight_layout()
