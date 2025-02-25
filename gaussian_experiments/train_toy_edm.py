@@ -112,15 +112,15 @@ def main():
     beta_schedule = args.beta_schedule
     beta_start, beta_end = args.beta_start, args.beta_end
     timesteps = args.timesteps
-    betas = get_beta_schedule(
-        beta_schedule, beta_start=beta_start, beta_end=beta_end, timesteps=timesteps)
-    model_mean_type = args.model_mean_type
-    model_var_type = args.model_var_type
-    loss_type = args.loss_type
+    # betas = get_beta_schedule(
+    #     beta_schedule, beta_start=beta_start, beta_end=beta_end, timesteps=timesteps)
+    # model_mean_type = args.model_mean_type
+    # model_var_type = args.model_var_type
+    # loss_type = args.loss_type
     diffusion = EDMDiffusion(sigma_min=beta_start, sigma_max=beta_end, sample_steps=timesteps, device=device)
 
     # model parameters
-    out_features = 2 * in_features if model_var_type == "learned" else in_features
+    # out_features = 2 * in_features if model_var_type == "learned" else in_features
     mid_features = args.mid_features
     model = Decoder(in_features, mid_features, args.num_temporal_layers)
     model.to(device)

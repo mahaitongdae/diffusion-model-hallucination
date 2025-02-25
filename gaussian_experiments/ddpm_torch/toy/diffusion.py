@@ -134,7 +134,7 @@ class EDMDiffusion:
     def __init__(self,
                  sigma_min, sigma_max, sample_steps, sampler='heun', device=torch.device('cpu'),):
         self.sigma_min, self.sigma_max = sigma_min, sigma_max
-        self.t_steps = get_schedule(20, self.sigma_min, self.sigma_max).to(device)
+        self.t_steps = get_schedule(sample_steps, self.sigma_min, self.sigma_max).to(device)
         self.timesteps = len(self.t_steps)
 
     def p_sample(self, denoise_fn, shape = None, device = torch.device("cpu"), noise = None, seed = None):
@@ -148,7 +148,7 @@ class EDMDiffusion:
         # for ti in range(self.timesteps - 1, -1, -1):
         #     t.fill_(ti)
         #     x_t = self.p_sample_step(denoise_fn, x_t, t, generator=rng)
-        x_t = self.heun_sample(denoise_fn, latents)
+        x_t = self.heun_sample(denoise_fn, latents, return_inters=False)
         return x_t
 
     # @torch.inference_mode()
@@ -160,7 +160,7 @@ class EDMDiffusion:
     #     score = (x_t - x_0)
 
     @torch.inference_mode()
-    def heun_sample(self, denoise_fn, latents, return_inters=False, S_churn=20):
+    def heun_sample(self, denoise_fn, latents, return_inters=False, S_churn=0):
         x_next = latents * self.t_steps[0]
         inters = [x_next.unsqueeze(0)]
         for i, (t_cur, t_next) in enumerate(zip(self.t_steps[:-1], self.t_steps[1:])):  # 0, ..., N-1
@@ -220,7 +220,7 @@ class EDMDiffusion:
         sigma = self.sigma_min * ((self.sigma_max / self.sigma_min) ** rnd_uniform)
         # weight = 1 / sigma ** 2
         weight = torch.ones(x_0.shape[0], device=x_0.device)
-        model_out = denoise_fn(x_0 + noise, sigma)
+        model_out = denoise_fn(x_0 + noise * sigma.unsqueeze(1), sigma)
         losses = torch.sum(weight.unsqueeze(1) * (model_out - x_0) ** 2, dim=-1)
         # # calculate the loss
         # # kl: weighted
