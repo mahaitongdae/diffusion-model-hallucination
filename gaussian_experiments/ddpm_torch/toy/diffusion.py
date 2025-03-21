@@ -137,7 +137,10 @@ class EDMDiffusion:
         self.t_steps = get_schedule(sample_steps, self.sigma_min, self.sigma_max).to(device)
         self.timesteps = len(self.t_steps)
 
-    def p_sample(self, denoise_fn, shape = None, device = torch.device("cpu"), noise = None, seed = None):
+    def p_sample(self,
+                 denoise_fn,
+                 sampler='heun',
+                 shape = None, device = torch.device("cpu"), noise = None, seed = None):
         rng = None
         if seed is not None:
             rng = torch.Generator(device).manual_seed(seed)
@@ -148,7 +151,12 @@ class EDMDiffusion:
         # for ti in range(self.timesteps - 1, -1, -1):
         #     t.fill_(ti)
         #     x_t = self.p_sample_step(denoise_fn, x_t, t, generator=rng)
-        x_t = self.heun_sample(denoise_fn, latents, return_inters=False)
+        if sampler == "heun":
+            x_t = self.heun_sample(denoise_fn, latents, return_inters=False)
+        elif sampler == 'euler':
+            x_t = self.euler_sample(denoise_fn, latents, return_inters=False)
+        else:
+            raise NotImplementedError("Sampler not implemented")
         return x_t
 
     # @torch.inference_mode()
@@ -167,8 +175,8 @@ class EDMDiffusion:
             x_cur = x_next
 
             gamma = min(S_churn / self.timesteps, np.sqrt(2) - 1)
-            t_hat = torch.as_tensor(t_cur + gamma * t_cur)
-            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * torch.randn_like(x_cur)
+            t_hat = torch.as_tensor(t_cur + gamma * t_cur) # t_hat = t_cur if no S_churn
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * torch.randn_like(x_cur) #  x_hat = x_cur if no S_churn
 
             # Euler step.
             denoised = denoise_fn(x_hat, t_hat)
@@ -180,6 +188,29 @@ class EDMDiffusion:
             denoised = denoise_fn(x_next, t_next)
             d_prime = (x_next - denoised) / t_next
             x_next = x_cur + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+            if return_inters:
+                inters.append(x_next.unsqueeze(0))
+        if return_inters:
+            return torch.cat(inters, dim=0).to(latents.device)
+        return x_next
+
+    @torch.inference_mode()
+    def euler_sample(self, denoise_fn, latents, return_inters=False, S_churn=0):
+        x_next = latents * self.t_steps[0]
+        inters = [x_next.unsqueeze(0)]
+        for i, (t_cur, t_next) in enumerate(zip(self.t_steps[:-1], self.t_steps[1:])):  # 0, ..., N-1
+            x_cur = x_next
+
+            gamma = min(S_churn / self.timesteps, np.sqrt(2) - 1)
+            t_hat = torch.as_tensor(t_cur + gamma * t_cur)  # t_hat = t_cur if no S_churn
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * torch.randn_like(x_cur)  # x_hat = x_cur if no S_churn
+
+            # Euler step.
+            denoised = denoise_fn(x_hat, t_hat)
+            d_cur = (x_cur - denoised) / t_hat  # here d is the \epsilon, if you try to get logp then
+            # logp = - d_cur / t_cur
+            x_next = x_hat + (t_next - t_hat) * d_cur
+
             if return_inters:
                 inters.append(x_next.unsqueeze(0))
         if return_inters:
@@ -222,41 +253,5 @@ class EDMDiffusion:
         weight = torch.ones(x_0.shape[0], device=x_0.device)
         model_out = denoise_fn(x_0 + noise * sigma.unsqueeze(1), sigma)
         losses = torch.sum(weight.unsqueeze(1) * (model_out - x_0) ** 2, dim=-1)
-        # # calculate the loss
-        # # kl: weighted
-        # # mse: unweighted
-        # if self.loss_type == "kl":
-        #     losses = self._loss_term_bpd(
-        #         denoise_fn, x_0=x_0, x_t=x_t, t=t, clip_denoised=False, return_pred=False)
-        # elif self.loss_type == "mse":
-        #     assert self.model_var_type != "learned"
-        #     if self.model_mean_type == "mean":
-        #         target = self.q_posterior_mean_var(x_0=x_0, x_t=x_t, t=t)[0]
-        #     elif self.model_mean_type == "x_0":
-        #         target = x_0
-        #     elif self.model_mean_type == "eps":
-        #         target = noise
-        #     else:
-        #         raise NotImplementedError(self.model_mean_type)
-        #     model_out = denoise_fn(x_t, t)
-        #     losses = flat_mean((target - model_out).pow(2))
-        # elif self.loss_type == "rssm":
-        #     noise_2 = torch.randn_like(x_0)
-        #     if self.sampling_dist == 'uniform':
-        #         # x_t =
-        #         sample_xt = torch.rand_like(x_0) * 10 - 5
-        #     elif self.sampling_dist == 'Gaussian':
-        #         sample_xt = torch.randn_like(x_0) * 3
-        #     elif self.sampling_dist == 'pt':
-        #         sample_xt = x_t.clone()
-        #     else:
-        #         raise NotImplementedError
-        #     tilde_x_0 = self.reverse_sample(sample_xt, t, noise=noise_2)
-        #     energy = 100 * (0.8 * torch.exp(- torch.linalg.norm(tilde_x_0 - 3 * torch.ones_like(x_t), axis=1) ** 2 / 2)
-        #           + 0.2 * torch.exp(- torch.linalg.norm(tilde_x_0 + 3 * torch.ones_like(x_t), axis=1) ** 2 /2 ))
-        #     model_out = denoise_fn(sample_xt, t)
-        #     losses = energy * flat_mean((noise_2 - model_out).pow(2))
-        # else:
-        #     raise NotImplementedError(self.loss_type)
 
         return losses, torch.linalg.norm(model_out, axis=1).mean().item()

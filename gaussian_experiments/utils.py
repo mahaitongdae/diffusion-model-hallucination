@@ -1,44 +1,10 @@
-import numpy as np
-from ddpm_torch.toy import *
 import matplotlib.pyplot as plt
-import torch
+import numpy as np
 from pathlib import Path
 from scipy.stats import entropy
-
-if __name__ == '__main__':
+def plot_with_kl_2d(gen_data):
     model_path = '/home/haitong/PycharmProjects/diffusion-model-hallucination/gaussian_experiments/chkpts/edm_UnbalancedGaussian2D_200000_rssm_uniform_0/ddpm_UnbalancedGaussian2D_gen_0.pt'
-    # replace with model_path
     true_data = np.load(Path(model_path).parent / 'real_dataset.npy')
-    trainloader = DataStreamer("UnbalancedGaussian2D", batch_size=10000, num_batches=2, modes=2)
-    evaluator = Evaluator(
-        true_data=np.concatenate([
-            next(iter(trainloader)) for _ in range(2)
-        ]), eval_batch_size=1000, max_eval_count=2000, value_range=[0, 10])
-
-    # diffusion = GaussianDiffusion(
-    #     betas=betas, model_mean_type="eps", model_var_type="fixed-large", loss_type="mse")
-    diffusion = EDMDiffusion(sigma_min=0.001, sigma_max=30, sample_steps=20, device=torch.device("cuda"))
-    # These are sigma_min, sigma_max, sample_step in train_toy_edm.py, feel free to change if you change the training hyperparameters.
-    model = Decoder(2, 128, 3).to(torch.device("cuda"))
-    # mid_features, num_temporal layers in hyperparameters.
-    model.load_state_dict(torch.load(model_path)['model'])
-
-
-    def denoise_fn(x_t, t):
-        return model(x_t, t)
-
-
-    def sample_fn(n):
-        shape = (n,) + (2,)
-        sample = diffusion.p_sample(
-            denoise_fn=denoise_fn, sampler='euler', shape=shape, device="cuda", noise=None)
-        return sample.detach().cpu().numpy()
-
-        # if evaluator is not None:
-
-
-    eval_results = evaluator.eval(sample_fn)
-    gen_data = eval_results['x_gen']
     plt.figure(figsize=(3, 3))
     # Generate example 2D data
     x = gen_data[:, 0]
