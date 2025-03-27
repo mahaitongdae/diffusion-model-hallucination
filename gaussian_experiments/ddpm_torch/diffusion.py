@@ -2,6 +2,7 @@ import math
 import torch
 from .functions import normal_kl, discretized_gaussian_loglik, flat_mean
 import copy
+import numpy as np
 
 
 def _warmup_beta(beta_start, beta_end, timesteps, warmup_frac, dtype):
@@ -28,6 +29,10 @@ def get_beta_schedule(beta_schedule, beta_start, beta_end, timesteps, dtype=torc
         raise NotImplementedError(beta_schedule)
     assert betas.shape == (timesteps, )
     return betas
+
+energy_func_gmm2 = lambda x: (0.8 * torch.exp(- torch.linalg.norm(x - 3., axis=1) ** 2 / 2)
+                  + 0.2 * torch.exp(- torch.linalg.norm(x + 3., axis=1) ** 2 /2 ))
+
 
 
 class GaussianDiffusion:
@@ -74,6 +79,36 @@ class GaussianDiffusion:
             "fixed-large": (self.betas, torch.log(torch.cat([self.posterior_var[[1]], self.betas[1:]]))),
             "fixed-small": (self.posterior_var, self.posterior_logvar_clipped)
         }[self.model_var_type]
+
+    def log_expectation_reward(
+            self,
+            t: torch.Tensor,
+            x: torch.Tensor,
+            energy_function,
+            num_mc_samples: int,
+    ):
+        repeated_x = x.unsqueeze(0).repeat_interleave(num_mc_samples, dim=0)
+
+        samples = self.reverse_sample(repeated_x, t)
+
+        log_rewards = energy_function(samples)
+
+        return torch.logsumexp(log_rewards, dim=-1) - np.log(num_mc_samples)
+
+    def estimate_grad_Rt(
+            self,
+            t: torch.Tensor,
+            x: torch.Tensor,
+            energy_function,
+            num_mc_samples: int = 100,
+    ):
+        if t.ndim == 0:
+            t = t.unsqueeze(0).repeat(len(x))
+
+        grad_fxn = torch.func.grad(self.log_expectation_reward, argnums=1)
+        vmapped_fxn = torch.vmap(grad_fxn, in_dims=(0, 0, None, None), randomness="different")
+
+        return vmapped_fxn(t, x, energy_function, num_mc_samples)
 
     @staticmethod
     def _extract(
@@ -317,6 +352,16 @@ class GaussianDiffusion:
                   + 0.2 * torch.exp(- torch.linalg.norm(tilde_x_0 + 3 * torch.ones_like(x_t), axis=1) ** 2 /2 ))
             model_out = denoise_fn(sample_xt, t)
             losses = energy * flat_mean((noise_2 - model_out).pow(2))
+
+        elif self.loss_type == "idem":
+            sample_xt = torch.rand_like(x_0) * 10 - 5
+
+            # grad_fxn = torch.func.grad(log_expectation_reward, argnums=1)
+            # vmapped_fxn = torch.vmap(grad_fxn, in_dims=(0, 0, None, None, None), randomness="different")
+            score = self.estimate_grad_Rt(t, sample_xt, energy_func_gmm2, )
+            coef2 = self._extract(self.sqrt_one_minus_alphas_bar, t, x_0)
+            model_out = denoise_fn(sample_xt, t)
+            losses = flat_mean((score * coef2 + model_out).pow(2))
         else:
             raise NotImplementedError(self.loss_type)
 
