@@ -5,7 +5,7 @@ from sklearn.datasets import make_swiss_roll
 from torch.utils.data import Dataset
 import random
 
-__all__ = ["Gaussian8", "Gaussian25", "SwissRoll", "DataStreamer", "GenToyDataset", "Gaussian1D"]
+__all__ = ["Gaussian8", "Gaussian25", "SwissRoll", "DataStreamer", "GenToyDataset", "Gaussian1D", "TwoMoonsToyData"]
 
 
 class ToyDataset(Dataset):
@@ -198,6 +198,20 @@ class SwissRoll(ToyDataset):
         return data
 
 
+class TwoMoonsToyData(ToyDataset):
+
+    def __init__(self, size, stdev=1., random_state=1234):
+        from gaussian_experiments.utils.twomoons import TwoMoons
+        self.twomoons = TwoMoons()
+        super(TwoMoonsToyData, self).__init__(size, stdev, random_state)
+
+    def _sample(self):
+        return self.twomoons.sample(self.size).numpy()
+
+
+
+
+
 class DataStreamer:
 
     def __init__(self, dataset: ToyDataset, batch_size: int, num_batches: int, resample: bool = False, modes=None):
@@ -241,6 +255,7 @@ class DataStreamer:
             "gaussian1d": Gaussian1D,
             "gaussian25_rotated": Gaussian25_Rotated,
             "UnbalancedGaussian2D": UnbalancedGaussian2D,
+            "TwoMoonsToyData": TwoMoonsToyData,
         }.get(dataset, None)
 
 

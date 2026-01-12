@@ -14,7 +14,7 @@ def parse_arguments():
     parser = ArgumentParser()
 
     parser.add_argument("--dataset", choices=["gaussian1d", "gaussian8", "gaussian25", "swissroll", 
-                                               "gaussian25_rotated"], default="gaussian25")
+                                               "gaussian25_rotated", "twomoon"], default="gaussian25")
     parser.add_argument("--size", default=100000, type=int)
     parser.add_argument("--root", default="~/datasets", type=str, help="root directory of datasets")
     parser.add_argument("--epochs", default=300, type=int, help="total number of training epochs")
@@ -25,7 +25,7 @@ def parse_arguments():
     parser.add_argument("--batch-size", default=10000, type=int)
     parser.add_argument("--timesteps", default=1000, type=int, help="number of diffusion steps")
 
-    parser.add_argument("--beta-schedule", choices=["quad", "linear", "warmup10", "warmup50", "jsd"], default="linear") 
+    parser.add_argument("--beta-schedule", choices=["quad", "linear", "cosine", "warmup10", "warmup50", "jsd"], default="linear") 
     parser.add_argument("--beta-start", default=0.001, type=float)
     parser.add_argument("--beta-end", default=0.2, type=float)
     parser.add_argument("--model-mean-type", choices=["mean", "x_0", "eps"], default="eps", type=str)

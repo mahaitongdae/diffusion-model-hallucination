@@ -13,7 +13,7 @@ def parse_arguments():
     parser = ArgumentParser()
 
     parser.add_argument("--dataset", choices=["gaussian1d", "gaussian8", "gaussian25", "swissroll", 
-                                               "gaussian25_rotated", "UnbalancedGaussian2D"], default="UnbalancedGaussian2D")
+                                               "gaussian25_rotated", "UnbalancedGaussian2D", "TwoMoonsToyData"], default="UnbalancedGaussian2D")
     parser.add_argument("--size", default=200000, type=int)
     parser.add_argument("--root", default="~/datasets", type=str, help="root directory of datasets")
     parser.add_argument("--epochs", default=300, type=int, help="total number of training epochs")
@@ -22,14 +22,14 @@ def parse_arguments():
     parser.add_argument("--beta2", default=0.999, type=float, help="beta_2 in Adam")
     parser.add_argument("--lr-warmup", default=0, type=int, help="number of warming-up epochs")
     parser.add_argument("--batch-size", default=2048, type=int)
-    parser.add_argument("--timesteps", default=20, type=int, help="number of diffusion steps")
+    parser.add_argument("--timesteps", default=50, type=int, help="number of diffusion steps")
 
-    parser.add_argument("--beta-schedule", choices=["quad", "linear", "warmup10", "warmup50", "jsd"], default="linear") 
+    parser.add_argument("--beta-schedule", choices=["quad", "linear", "cosine", "warmup10", "warmup50", "jsd"], default="linear") 
     parser.add_argument("--beta-start", default=0.001, type=float)
     parser.add_argument("--beta-end", default=0.3, type=float)
     parser.add_argument("--model-mean-type", choices=["mean", "x_0", "eps"], default="eps", type=str)
-    parser.add_argument("--model-var-type", choices=["learned", "fixed-small", "fixed-large"], default="fixed-large", type=str)  # noqa
-    parser.add_argument("--loss-type", choices=["kl", "mse", "rssm", "idem"], default="idem", type=str)
+    parser.add_argument("--model-var-type", choices=["learned", "fixed-small", "fixed-large"], default="fixed-small", type=str)  # noqa
+    parser.add_argument("--loss-type", choices=["kl", "mse", "rssm", "idem"], default="rssm", type=str)
     parser.add_argument("--sampling_dist", choices=["uniform", "pt", "Gaussian"], default="uniform", type=str)
     parser.add_argument("--image-dir", default="./images/train", type=str)
     parser.add_argument("--exp_str", default="0", type=str)

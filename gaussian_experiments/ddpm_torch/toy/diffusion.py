@@ -1,22 +1,50 @@
+from typing import Callable
 import math
 import torch
 from .. import diffusion
 from ..functions import normal_kl, continuous_gaussian_loglik, flat_mean
 
+energy_func_gmm2 = lambda x: (0.8 * torch.exp(- torch.linalg.norm(x - 3., axis=1) ** 2 / 2)
+                  + 0.2 * torch.exp(- torch.linalg.norm(x + 3., axis=1) ** 2 /2 ))
+
 
 class GaussianDiffusion(diffusion.GaussianDiffusion):
 
-
     def get_true_score_unbalanced_gmm(self, x_t, t):
         x_t = x_t.detach_().requires_grad_(True)
-        energy = torch.log(0.8 * torch.exp(- torch.linalg.norm(x_t - 1.5 * torch.ones_like(x_t), axis=1) ** 2 / 2)
-                  + 0.2 * torch.exp(- torch.linalg.norm(x_t + 1.5 * torch.ones_like(x_t), axis=1) ** 2 /2))
+        energy = torch.log(0.8 * torch.exp(
+            -torch.linalg.norm(x_t - 1.5 * torch.ones_like(x_t), axis=1)**2 /
+            2) + 0.2 * torch.exp(-torch.linalg.norm(
+                x_t + 1.5 * torch.ones_like(x_t), axis=1)**2 / 2))
         score = torch.autograd.grad(energy.sum(), x_t)[0]
         scale = self._extract(self.sqrt_one_minus_alphas_bar, t, x_t)
-        return - scale * score
+        return -scale * score
 
+    def get_idem_score_single(self, x_t: torch.Tensor, t: float,
+                              energy_fn: Callable):
+        """
+        x_t: (x_shape,)
+        recon_fn: Callable[torch.Tensor, float, torch.Tensor] -> torch.Tensor
+        energy_fn: Callable[torch.Tensor] -> torch.Tensor
+        """
+        assert x_t.ndim == 1
+        x_shape = x_t.shape[0]
+        size = 100
+        noise = torch.randn([size, x_shape]) * t
+        samples = self.reverse_sample(x_t, t, noise)
+        energy = energy_fn(samples)
+        lse = torch.logsumexp(energy, dim=-1)
+        return lse
 
-
+    def get_idem_score_unbalanced_gmm(self, x_t: torch.Tensor, t: float,
+                                      energy_fn: Callable):
+        
+        x_t = x_t.detach_().requires_grad_(True)
+        lse = torch.vmap(self.get_idem_score_single, (0, 0, None),
+                         randomness="different")(x_t, t, energy_fn)
+        score = torch.autograd.grad(lse.sum(), x_t)[0]
+        scale = self._extract(self.sqrt_one_minus_alphas_bar, t, x_t)
+        return -scale * score
 
     def q_sample(self, x_0, t, noise=None):
         if noise is None:
@@ -46,10 +74,14 @@ class GaussianDiffusion(diffusion.GaussianDiffusion):
             model_mean = out
         elif self.model_mean_type == "x_0":
             pred_x_0 = _clip(out)
-            model_mean, *_ = self.q_posterior_mean_var(x_0=pred_x_0, x_t=x_t, t=t)
+            model_mean, *_ = self.q_posterior_mean_var(x_0=pred_x_0,
+                                                       x_t=x_t,
+                                                       t=t)
         elif self.model_mean_type == "eps":
             pred_x_0 = _clip(self._pred_x_0_from_eps(x_t=x_t, eps=out, t=t))
-            model_mean, *_ = self.q_posterior_mean_var(x_0=pred_x_0, x_t=x_t, t=t)
+            model_mean, *_ = self.q_posterior_mean_var(x_0=pred_x_0,
+                                                       x_t=x_t,
+                                                       t=t)
         else:
             raise NotImplementedError(self.model_mean_type)
 
@@ -57,19 +89,29 @@ class GaussianDiffusion(diffusion.GaussianDiffusion):
             return model_mean, model_var, model_logvar, pred_x_0
         else:
             return model_mean, model_var, model_logvar
+
     # === log likelihood ===
     # bpd: bits per dimension
 
-    def _loss_term_bpd(self, denoise_fn, x_0, x_t, t, clip_denoised, return_pred):
+    def _loss_term_bpd(self, denoise_fn, x_0, x_t, t, clip_denoised,
+                       return_pred):
         # calculate L_t
         # t = 0: negative log likelihood of decoder, -\log p(x_0 | x_1)
         # t > 0: variational lower bound loss term, KL term
-        true_mean, _, true_logvar = self.q_posterior_mean_var(x_0=x_0, x_t=x_t, t=t)  # noqa
+        true_mean, _, true_logvar = self.q_posterior_mean_var(x_0=x_0,
+                                                              x_t=x_t,
+                                                              t=t)  # noqa
         model_mean, _, model_logvar, pred_x_0 = self.p_mean_var(
-            denoise_fn, x_t=x_t, t=t, clip_denoised=clip_denoised, return_pred=True)
+            denoise_fn,
+            x_t=x_t,
+            t=t,
+            clip_denoised=clip_denoised,
+            return_pred=True)
         kl = normal_kl(true_mean, true_logvar, model_mean, model_logvar)
         kl = flat_mean(kl) / math.log(2.)  # natural base to base 2
-        decoder_nll = continuous_gaussian_loglik(x_0, model_mean, logvar=model_logvar).neg()
+        decoder_nll = continuous_gaussian_loglik(x_0,
+                                                 model_mean,
+                                                 logvar=model_logvar).neg()
         decoder_nll = flat_mean(decoder_nll) / math.log(2.)
         output = torch.where(t.to(kl.device) > 0, kl, decoder_nll)
         return (output, pred_x_0) if return_pred else output

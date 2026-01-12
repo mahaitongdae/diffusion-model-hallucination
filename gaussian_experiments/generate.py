@@ -1,6 +1,38 @@
+from typing import Callable
 import numpy as np
 from ddpm_torch.toy import *
 import matplotlib.pyplot as plt
+import torch
+
+
+
+energy_func_gmm2 = lambda x: torch.log(0.8 * torch.exp(- torch.linalg.norm(x - 3., axis=1) ** 2 / 2)
+                  + 0.2 * torch.exp(- torch.linalg.norm(x + 3., axis=1) ** 2 /2 )).sum(dim=-1)
+
+
+def get_idem_score_single(x_t: torch.Tensor, t: float, recon_fn: Callable,
+                          energy_fn: Callable):
+    """
+    x_t: (x_shape,)
+    recon_fn: Callable[torch.Tensor, float, torch.Tensor] -> torch.Tensor
+    energy_fn: Callable[torch.Tensor] -> torch.Tensor
+    """
+    assert x_t.ndim == 1
+    x_shape = x_t.shape[0]
+    size = 100
+    noise = torch.randn([size, x_shape]) * t
+    samples = recon_fn(x_t, t, noise)
+    energy = energy_fn(samples)
+    lse = torch.logsumexp(energy, dim=-1)
+    return lse
+
+
+# def get_idem_score_unbalanced_gmm(self, x_t, t):
+#     x_t = x_t.detach_().requires_grad_(True)
+#     lse = torch.vmap(get_idem_score_single, (0, 0, None), randomness="different")(x_t, t, energy_func_gmm2)
+#     score = torch.autograd.grad(lse.sum(), x_t)[0]  # score function
+#     scale = self._extract(self.sqrt_one_minus_alphas_bar, t, x_t)  # predicted noise
+#     return - scale * score
 
 if __name__ == '__main__':
     trainloader = DataStreamer("UnbalancedGaussian2D", batch_size=10000, num_batches=2, modes=2)
@@ -10,14 +42,14 @@ if __name__ == '__main__':
         ]), eval_batch_size=1000, max_eval_count=2000, value_range=[0, 10])
 
     betas = get_beta_schedule(
-        "linear", beta_start=0.001, beta_end=0.01, timesteps=1000)
+        "linear", beta_start=0.001, beta_end=0.1, timesteps=1000)
 
     diffusion = GaussianDiffusion(
         betas=betas, model_mean_type="eps", model_var_type="fixed-large", loss_type="mse")
 
 
     def denoise_fn(x_t, t):
-        return diffusion.get_true_score_unbalanced_gmm(x_t, t)
+        return diffusion.get_idem_score_unbalanced_gmm(x_t, t, energy_func_gmm2)
 
 
     def sample_fn(n):
@@ -31,43 +63,7 @@ if __name__ == '__main__':
 
     eval_results = evaluator.eval(sample_fn)
     gen_data = eval_results['x_gen']
-    plt.figure(figsize=(3, 3))
-    # Generate example 2D data
-    x = gen_data[:, 0]
-    y = gen_data[:, 1]
 
-    # Create the figure and gridspec layout
-    fig = plt.figure(figsize=(3, 3))
-    grid = plt.GridSpec(4, 4, hspace=0.2, wspace=0.2)
+    from utils.plot import plot_hist
 
-    # Scatter plot
-    scatter_ax = fig.add_subplot(grid[1:, :-1])
-    scatter_ax.scatter(x, y, alpha=0.5, s=0.5)
-    scatter_ax.set_xlim([-6, 6])
-    scatter_ax.set_ylim([-6, 6])
-    scatter_ax.set_xticks(np.array([-6, -3, 0, 3, 6]))
-    scatter_ax.set_yticks(np.array([-6, -3, 0, 3, 6]))
-    scatter_ax.grid(True)
-
-    # Histogram for X-axis
-    x_hist_ax = fig.add_subplot(grid[0, :-1], sharex=scatter_ax)
-    x_hist_ax.hist(x, bins=2, color='blue', alpha=0.7, weights=np.ones_like(x) / len(x))
-    # x_hist_ax.axis('off')  # Hide x-ticks and labels
-    x_hist_ax.grid(True)
-    x_hist_ax.set_yticks([0.2, 0.8, ])
-    x_hist_ax.tick_params(axis='x', which='both', labelbottom=False)
-
-    # Histogram for Y-axis
-    y_hist_ax = fig.add_subplot(grid[1:, -1], sharey=scatter_ax)
-    y_hist_ax.hist(y, bins=2, orientation='horizontal', color='green', alpha=0.7, weights=np.ones_like(y) / len(y))
-    y_hist_ax.grid(True)
-    y_hist_ax.tick_params(axis='y', which='both', labelleft=False)
-    y_hist_ax.set_xticks([0.2, 0.8])
-
-    plt.suptitle('Langevin dynamics sample \n with true score function')
-
-    # Adjust the layout to avoid overlaps
-    plt.tight_layout()
-
-    # Show the plot
-    plt.savefig('generate_langevin.pdf')
+    plot_hist(gen_data, 'iDEM', 'generate_idem_202601.pdf')

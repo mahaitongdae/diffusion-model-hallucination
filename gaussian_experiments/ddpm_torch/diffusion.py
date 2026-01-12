@@ -3,7 +3,7 @@ import torch
 from .functions import normal_kl, discretized_gaussian_loglik, flat_mean
 import copy
 import numpy as np
-
+# from gaussian_experiments.utils.twomoons import TwoMoons
 
 def _warmup_beta(beta_start, beta_end, timesteps, warmup_frac, dtype):
     betas = beta_end * torch.ones(timesteps, dtype=dtype)
@@ -17,6 +17,14 @@ def get_beta_schedule(beta_schedule, beta_start, beta_end, timesteps, dtype=torc
         betas = torch.linspace(beta_start ** 0.5, beta_end ** 0.5, timesteps, dtype=dtype) ** 2
     elif beta_schedule == 'linear':
         betas = torch.linspace(beta_start, beta_end, timesteps, dtype=dtype)
+    elif beta_schedule == 'cosine':
+        # Nichol & Dhariwal 2021 cosine schedule
+        s = 0.008
+        t = torch.linspace(0, timesteps, timesteps + 1, dtype=dtype) / timesteps
+        alphas_bar = torch.cos((t + s) / (1 + s) * math.pi / 2) ** 2
+        alphas_bar = alphas_bar / alphas_bar[0]
+        betas = 1 - (alphas_bar[1:] / alphas_bar[:-1])
+        betas = torch.clamp(betas, min=0.0, max=0.999)
     elif beta_schedule == 'warmup10':
         betas = _warmup_beta(beta_start, beta_end, timesteps, 0.1, dtype=dtype)
     elif beta_schedule == 'warmup50':
@@ -79,6 +87,7 @@ class GaussianDiffusion:
             "fixed-large": (self.betas, torch.log(torch.cat([self.posterior_var[[1]], self.betas[1:]]))),
             "fixed-small": (self.posterior_var, self.posterior_logvar_clipped)
         }[self.model_var_type]
+        # self.tm = TwoMoons()
 
     def log_expectation_reward(
             self,
@@ -137,8 +146,8 @@ class GaussianDiffusion:
     def reverse_sample(self, x_t, t, noise=None):
         if noise is None:
             noise = torch.randn_like(x_t)
-        coef1 = self._extract(self.sqrt_recip_alphas_bar, t, x_t)
-        coef2 = self._extract(self.sqrt_recip_m1_alphas_bar, t, x_t)
+        coef1 = self._extract(self.sqrt_recip_alphas_bar, t, x_t)  # 1 / \sqrt{\bar \alpha_t}
+        coef2 = self._extract(self.sqrt_recip_m1_alphas_bar, t, x_t)  # \sqrt{1 / \bar\alpha_t - 1}
         return coef1 * x_t - coef2 * noise
 
     def q_posterior_mean_var(self, x_0, x_t, t):
@@ -350,6 +359,7 @@ class GaussianDiffusion:
             tilde_x_0 = self.reverse_sample(sample_xt, t, noise=noise_2)
             energy = 100 * (0.8 * torch.exp(- torch.linalg.norm(tilde_x_0 - 3 * torch.ones_like(x_t), axis=1) ** 2 / 2)
                   + 0.2 * torch.exp(- torch.linalg.norm(tilde_x_0 + 3 * torch.ones_like(x_t), axis=1) ** 2 /2 ))
+            # energy = torch.exp(self.tm.log_prob(tilde_x_0))
             model_out = denoise_fn(sample_xt, t)
             losses = energy * flat_mean((noise_2 - model_out).pow(2))
 
