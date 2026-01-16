@@ -7,12 +7,13 @@ from torch.optim import Adam, lr_scheduler
 from matplotlib import pyplot as plt
 from argparse import ArgumentParser
 import wandb
+import datetime
 
 def parse_arguments():
 
     parser = ArgumentParser()
 
-    parser.add_argument("--dataset", choices=["gaussian1d", "gaussian8", "gaussian25", "swissroll", 
+    parser.add_argument("--dataset", choices=["gaussian1d", "gaussian8", "gaussian25", "swissroll",
                                                "gaussian25_rotated", "UnbalancedGaussian2D", "TwoMoonsToyData"], default="UnbalancedGaussian2D")
     parser.add_argument("--size", default=200000, type=int)
     parser.add_argument("--root", default="~/datasets", type=str, help="root directory of datasets")
@@ -20,17 +21,20 @@ def parse_arguments():
     parser.add_argument("--lr", default=0.001, type=float, help="learning rate")
     parser.add_argument("--beta1", default=0.9, type=float, help="beta_1 in Adam")
     parser.add_argument("--beta2", default=0.999, type=float, help="beta_2 in Adam")
+    parser.add_argument("--use-ema", action="store_true", help="apply EMA to model parameters during training")
+    parser.add_argument("--ema-decay", default=0.9999, type=float, help="EMA decay rate")
     parser.add_argument("--lr-warmup", default=0, type=int, help="number of warming-up epochs")
     parser.add_argument("--batch-size", default=2048, type=int)
     parser.add_argument("--timesteps", default=50, type=int, help="number of diffusion steps")
 
-    parser.add_argument("--beta-schedule", choices=["quad", "linear", "cosine", "warmup10", "warmup50", "jsd"], default="linear") 
+    parser.add_argument("--beta-schedule", choices=["quad", "linear", "cosine", "warmup10", "warmup50", "jsd"], default="linear")
     parser.add_argument("--beta-start", default=0.001, type=float)
     parser.add_argument("--beta-end", default=0.3, type=float)
     parser.add_argument("--model-mean-type", choices=["mean", "x_0", "eps"], default="eps", type=str)
     parser.add_argument("--model-var-type", choices=["learned", "fixed-small", "fixed-large"], default="fixed-small", type=str)  # noqa
-    parser.add_argument("--loss-type", choices=["kl", "mse", "rssm", "idem"], default="rssm", type=str)
+    parser.add_argument("--loss-type", choices=["kl", "mse", "rssm", "idem"], default="mse", type=str)
     parser.add_argument("--sampling_dist", choices=["uniform", "pt", "Gaussian"], default="uniform", type=str)
+    parser.add_argument("--sample-x0-noise-std", default=0.0, type=float, help="Std of Gaussian noise added to sampled x0 in RL reweighting")
     parser.add_argument("--image-dir", default="./images/train", type=str)
     parser.add_argument("--exp_str", default="0", type=str)
     parser.add_argument("--chkpt_dir", default="./chkpts", type=str)
@@ -44,10 +48,10 @@ def parse_arguments():
 
     parser.add_argument('--num_modes', type=int, help='Number of Modes (for 1D only)', default=3)
     parser.add_argument('--modes', type=int, nargs='+', help='Means of the Gaussians (for 1D only)', default=[1, 2, 3])
- 
+
     parser.add_argument("--generations", default=1, type=int)
     parser.add_argument("--num_sample_images", default=10_000, type=int)
- 
+
     parser.add_argument("--wandb_project_name", default="ddpm_hallucination", type=str)
     parser.add_argument("--wandb_entity", default="haitongma", type=str)
     parser.add_argument("--log_results", default=True, action="store_true", help="log results to wandb")
@@ -65,7 +69,7 @@ def main():
     else:
         dataset_name = args.dataset
     args.store_name = "_".join([
-        dataset_name, str(args.size), f"{args.loss_type}", f"{args.sampling_dist}", args.exp_str
+        dataset_name, str(args.size), f"{args.loss_type}", f"{args.sampling_dist}", args.exp_str, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     ])
     # set seed
     seed_all(args.seed)
@@ -119,7 +123,7 @@ def main():
     loss_type = args.loss_type
     diffusion = GaussianDiffusion(
         betas=betas, model_mean_type=model_mean_type, model_var_type=model_var_type, loss_type=loss_type,
-        sampling_dist=args.sampling_dist)
+        sampling_dist=args.sampling_dist, sample_x0_noise_std=args.sample_x0_noise_std)
 
     # model parameters
     out_features = 2 * in_features if model_var_type == "learned" else in_features
@@ -160,6 +164,8 @@ def main():
         trainloader=trainloader,
         scheduler=scheduler,
         grad_norm=grad_norm,
+        use_ema=args.use_ema,
+        ema_decay=args.ema_decay,
         device=device,
         eval_intv=eval_intv,
         chkpt_intv=chkpt_intv, gen=0, args=args

@@ -15,7 +15,7 @@ class ToyDataset(Dataset):
         self.random_state = random_state
         self.stdev = self._calc_stdev()
         self.data = self._sample()
-        
+
     def _calc_stdev(self):
         pass
 
@@ -29,7 +29,7 @@ class ToyDataset(Dataset):
         return self.size
 
     def __getitem__(self, idx):
-        return torch.from_numpy(self.data[idx])
+        return torch.from_numpy(self.data[idx]).float()
 
 class GenToyDataset(Dataset):
     def __init__(self, data):
@@ -40,7 +40,7 @@ class GenToyDataset(Dataset):
         return self.size
 
     def __getitem__(self, idx):
-        return torch.from_numpy(self.data[idx])
+        return torch.from_numpy(self.data[idx]).float()
 
 
 
@@ -54,11 +54,11 @@ class Gaussian8(ToyDataset):
     def __init__(self, size, stdev=0.02, random_state=1234):
         self.modes = self.scale * np.array(self.modes, dtype=np.float32)
         super(Gaussian8, self).__init__(size, stdev, random_state)
-    
+
     def _calc_stdev(self):
         # total variance = expected conditional variance + variance of conditional expectation
         return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 0.5)  # x-y symmetric; around 1.414
-    
+
     def _sample(self):
         rng = np.random.default_rng(seed=self.random_state)
         data = self.noise * rng.standard_normal((self.size, 2), dtype=np.float32)
@@ -78,7 +78,7 @@ class Gaussian25(ToyDataset):
 
     def _calc_stdev(self):
         # x-y symmetric; around 2.828
-        return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 2.)  
+        return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 2.)
 
     def _sample(self):
         rng = np.random.default_rng(self.random_state)
@@ -87,7 +87,7 @@ class Gaussian25(ToyDataset):
         data /= self.stdev
         return data
 
-    
+
 class Gaussian25_Rotated(ToyDataset):
     scale = 2
     modes = [(-2, 0), (-1.5, 0.5), (-1, 1), (-0.5, 1.5), (0, 2),
@@ -102,7 +102,7 @@ class Gaussian25_Rotated(ToyDataset):
 
     def _calc_stdev(self):
         # x-y symmetric; around 2.828
-        return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 2.)  
+        return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 2.)
 
     def _sample(self):
         rng = np.random.default_rng(self.random_state)
@@ -113,6 +113,7 @@ class Gaussian25_Rotated(ToyDataset):
 
 
 class Gaussian1D(ToyDataset):
+
     def __init__(self, size, means, stdev=0.05, random_state=1234):
         self.modes = np.array(means, dtype=np.float32)
         self.num_modes = len(means)
@@ -129,6 +130,22 @@ class Gaussian1D(ToyDataset):
         for i, mode_index in enumerate(mode_indices):
             data[i] += self.modes[mode_index]
 
+        return data
+
+
+class Uniform1D(ToyDataset):
+
+    def __init__(self, size, range=(-1, 1), random_state=1234):
+        self.range = range
+        super(Uniform1D, self).__init__(size,
+                                        stdev=1.,
+                                        random_state=random_state)
+
+    def _sample(self):
+        rng = np.random.default_rng(self.random_state)
+        data = rng.uniform(low=self.range[0],
+                           high=self.range[1],
+                           size=self.size).astype(np.float32)
         return data
 
 class UnbalancedGaussian2D(ToyDataset):
@@ -215,11 +232,11 @@ class TwoMoonsToyData(ToyDataset):
 class DataStreamer:
 
     def __init__(self, dataset: ToyDataset, batch_size: int, num_batches: int, resample: bool = False, modes=None):
-        
+
         if isinstance(dataset, str):
             dataset_name = dataset
             dataset = self.dataset_map(dataset)
-        
+
             if dataset_name == "gaussian1d":
                 assert modes is not None, "Modes must be provided for 1D Gaussian"
                 self.dataset = dataset(size=batch_size * num_batches, random_state=None, means=modes)
@@ -236,7 +253,7 @@ class DataStreamer:
         while True:
             start = cnt * self.batch_size
             end = start + self.batch_size
-            yield torch.from_numpy(self.dataset.data[start:end])
+            yield torch.from_numpy(self.dataset.data[start:end]).float()
             cnt += 1
             if cnt >= self.num_batches:
                 break
@@ -245,7 +262,7 @@ class DataStreamer:
 
     def __len__(self):
         return self.num_batches
-        
+
     @staticmethod
     def dataset_map(dataset):
         return {
@@ -256,6 +273,7 @@ class DataStreamer:
             "gaussian25_rotated": Gaussian25_Rotated,
             "UnbalancedGaussian2D": UnbalancedGaussian2D,
             "TwoMoonsToyData": TwoMoonsToyData,
+            "Uniform1d": Uniform1D,
         }.get(dataset, None)
 
 

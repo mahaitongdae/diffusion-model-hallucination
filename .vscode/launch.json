@@ -1,0 +1,19 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "policy extraction with args",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "gaussian_experiments/train_toy_policy_extraction.py",
+            "console": "integratedTerminal",
+            "args": ["--exp_str", "debugging", "--energy_fn", "energy_func_log_two_gaussian", "--use-ema",
+             "--loss-type", "reweighting_rl", "--size", "2048", "--weights_transform_fn", "substract_min-identity",
+             "--sample-x0-noise-std", "0.2", "--reweighting_rl_warmup_epochs", "0"]
+        }
+    ]
+}

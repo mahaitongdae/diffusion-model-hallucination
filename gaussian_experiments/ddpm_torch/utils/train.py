@@ -62,6 +62,7 @@ save_image = partial(_save_image, normalize=True, value_range=(-1., 1.))
 
 
 class Trainer:
+
     def __init__(
             self,
             model,
@@ -82,8 +83,7 @@ class Trainer:
             ema_decay=0.9999,
             distributed=False,
             rank=0,  # process id for distributed training
-            dry_run=False
-    ):
+            dry_run=False):
         self.model = model
         self.optimizer = optimizer
         self.diffusion = diffusion
@@ -134,15 +134,19 @@ class Trainer:
     def get_input(self, x):
         x = x.to(self.device)
         return {
-            "x_0": x,
-            "t": torch.empty((x.shape[0],), dtype=torch.int64, device=self.device).random_(
-                to=self.timesteps, generator=self.generator),
-            "noise": torch.empty_like(x).normal_(generator=self.generator)
+            "x_0":
+            x,
+            "t":
+            torch.empty((x.shape[0], ), dtype=torch.int64,
+                        device=self.device).random_(to=self.timesteps,
+                                                    generator=self.generator),
+            "noise":
+            torch.empty_like(x).normal_(generator=self.generator)
         }
 
     def loss(self, x):
         loss = self.diffusion.train_losses(self.model, **self.get_input(x))
-        assert loss.shape == (x.shape[0],)
+        assert loss.shape == (x.shape[0], )
         return loss
 
     def step(self, x, global_steps=1):
@@ -150,13 +154,15 @@ class Trainer:
         # See https://pytorch.org/docs/1.12/generated/torch.nn.parallel.DistributedDataParallel.html
         # Mean-reduced loss should be used to avoid inconsistent learning rate issue when number of devices changes.
         loss = self.loss(x).mean()
-        loss.div(self.num_accum).backward()  # average over accumulated mini-batches
+        loss.div(
+            self.num_accum).backward()  # average over accumulated mini-batches
         if global_steps % self.num_accum == 0:
             # gradient clipping by global norm
             # Note: In the official TF1.15+TPU implementation (clip_by_global_norm + CrossShardOptimizer)
             # the gradient clipping operation is performed at shard level (i.e., TPU core or device level)
             # see also https://github.com/tensorflow/tensorflow/blob/v1.15.0/tensorflow/python/tpu/tpu_optimizer.py#L114-L118
-            nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_norm)
+            nn.utils.clip_grad_norm_(self.model.parameters(),
+                                     max_norm=self.grad_norm)
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
             # adjust learning rate every step (e.g. warming up)
@@ -165,24 +171,34 @@ class Trainer:
                 self.ema.update()
         loss = loss.detach()
         if self.distributed:
-            dist.reduce(loss, dst=0, op=dist.ReduceOp.SUM)  # synchronize losses
+            dist.reduce(loss, dst=0,
+                        op=dist.ReduceOp.SUM)  # synchronize losses
             loss.div_(self.world_size)
         self.stats.update(x.shape[0], loss=loss.item() * x.shape[0])
 
-    def sample_fn(self, sample_size=None, noise=None, diffusion=None, sample_seed=None):
+    def sample_fn(self,
+                  sample_size=None,
+                  noise=None,
+                  diffusion=None,
+                  sample_seed=None):
         if noise is None:
-            shape = (sample_size // self.world_size,) + self.shape
+            shape = (sample_size // self.world_size, ) + self.shape
         else:
             shape = noise.shape
         if diffusion is None:
             diffusion = self.diffusion
         with self.ema:
-            sample = diffusion.p_sample(
-                denoise_fn=self.model, shape=shape,
-                device=self.device, noise=noise, seed=sample_seed)
+            sample = diffusion.p_sample(denoise_fn=self.model,
+                                        shape=shape,
+                                        device=self.device,
+                                        noise=noise,
+                                        seed=sample_seed)
         if self.distributed:
             # equalizes GPU memory usages across all processes within the same process group
-            sample_list = [torch.zeros(shape, device=self.device) for _ in range(self.world_size)]
+            sample_list = [
+                torch.zeros(shape, device=self.device)
+                for _ in range(self.world_size)
+            ]
             dist.all_gather(sample_list, sample)
             sample = torch.cat(sample_list, dim=0)
         assert sample.grad is None
@@ -203,7 +219,9 @@ class Trainer:
             results = dict()
             if isinstance(self.sampler, DistributedSampler):
                 self.sampler.set_epoch(e)
-            with tqdm(self.trainloader, desc=f"{e + 1}/{self.epochs} epochs", disable=not self.is_leader) as t:
+            with tqdm(self.trainloader,
+                      desc=f"{e + 1}/{self.epochs} epochs",
+                      disable=not self.is_leader) as t:
                 for i, x in enumerate(t):
                     if isinstance(x, (list, tuple)):
                         x = x[0]  # unconditional model -> discard labels
@@ -214,16 +232,23 @@ class Trainer:
                     if self.dry_run and not global_steps % self.num_accum:
                         break
 
-            if not (e + 1) % self.image_intv and self.num_samples and image_dir:
+            if not (e +
+                    1) % self.image_intv and self.num_samples and image_dir:
                 self.model.eval()
-                x = self.sample_fn(sample_size=self.num_samples, sample_seed=self.sample_seed).cpu()
+                x = self.sample_fn(sample_size=self.num_samples,
+                                   sample_seed=self.sample_seed).cpu()
+                if self.diffusion.loss_type == "reweighting_rl":
+                    energy = self.diffusion.energy_fn(x)
                 if self.is_leader:
-                    save_image(x, os.path.join(image_dir, f"{e + 1}.jpg"), nrow=nrow)
+                    save_image(x,
+                               os.path.join(image_dir, f"{e + 1}.jpg"),
+                               nrow=nrow)
 
             if not (e + 1) % self.chkpt_intv and chkpt_path:
                 self.model.eval()
                 if evaluator is not None:
-                    eval_results = evaluator.eval(self.sample_fn, is_leader=self.is_leader)
+                    eval_results = evaluator.eval(self.sample_fn,
+                                                  is_leader=self.is_leader)
                 else:
                     eval_results = dict()
                 results.update(eval_results)
@@ -252,7 +277,8 @@ class Trainer:
             try:
                 getattr(self, trainee).load_state_dict(chkpt[trainee])
             except RuntimeError:
-                _chkpt = chkpt[trainee]["shadow"] if trainee == "ema" else chkpt[trainee]
+                _chkpt = chkpt[trainee][
+                    "shadow"] if trainee == "ema" else chkpt[trainee]
                 for k in list(_chkpt.keys()):
                     if k.startswith("module."):
                         _chkpt[k.split(".", maxsplit=1)[1]] = _chkpt.pop(k)
@@ -268,7 +294,8 @@ class Trainer:
         for k, v in extra_info.items():
             chkpt.append((k, v))
         if "epoch" in extra_info:
-            chkpt_path = re.sub(r"(_\d+)?\.pt", f"_{extra_info['epoch']}.pt", chkpt_path)
+            chkpt_path = re.sub(r"(_\d+)?\.pt", f"_{extra_info['epoch']}.pt",
+                                chkpt_path)
         torch.save(dict(chkpt), chkpt_path)
 
     def named_state_dicts(self):

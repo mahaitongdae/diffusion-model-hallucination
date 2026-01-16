@@ -5,7 +5,7 @@ from .toy_utils import Trainer, Evaluator, Evaluator1D
 from ..diffusion import get_beta_schedule
 from .toy_data import GenToyDataset
 from .toy_data import Gaussian1D
-
+from .toy_data import Uniform1D
 __all__ = [
     "GaussianDiffusion",
     "get_beta_schedule",
@@ -15,5 +15,6 @@ __all__ = [
     "Evaluator",
     "Evaluator1D",
     "GenToyDataset",
-    "Gaussian1D"
+    "Gaussian1D",
+    "Uniform1D"
 ]
