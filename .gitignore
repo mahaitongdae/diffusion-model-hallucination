@@ -168,3 +168,6 @@ cython_debug/
 .idea/
 
 gaussian_experiments/images
+
+**.pdf
+.vscode/**
