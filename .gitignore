@@ -173,3 +173,7 @@ gaussian_experiments/images
 *.png
 *.pdf
 *.svg
+
+.vscode/**
+*.vscode/**
+.vscode/launch.json
