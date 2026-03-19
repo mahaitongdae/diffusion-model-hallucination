@@ -145,7 +145,7 @@ class Trainer:
         }
 
     def loss(self, x):
-        loss = self.diffusion.train_losses(self.model, **self.get_input(x))
+        loss, info = self.diffusion.train_losses(self.model, **self.get_input(x))
         assert loss.shape == (x.shape[0], )
         return loss
 

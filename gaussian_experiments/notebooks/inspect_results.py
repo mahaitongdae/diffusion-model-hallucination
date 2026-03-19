@@ -40,9 +40,12 @@ def plot_mean(patterns_dict: Dict, fig_name = None,
 
 
 def load_best_results(pattern, env_name, show_df=False,
-              max_steps=None, verbose=False):
-    package_path = Path(__file__).parent.parent.parent
-    logdir = package_path / 'chkpts'
+              max_steps=None, verbose=False, logdir=None):
+    if logdir is None:
+        package_path = Path(__file__).parent.parent.parent
+        logdir = package_path / 'chkpts'
+    else:
+        logdir = Path(logdir)
     # pattern = r".*diffv2.*noise_scale_0\.0\d$"
     # pattern = r".*diffv2.*noise_scale_0\.09"
     # pattern = r".*qsm.*01-07.*qsm_lr_schedule$"
@@ -55,7 +58,7 @@ def load_best_results(pattern, env_name, show_df=False,
         if len(df) > 0:
             if max_steps is not None:
                 df = df[df['epoch'] < max_steps]
-            sliced_df = df.loc[df['energy_mean'].idxmin()].copy()
+            sliced_df = df.loc[df['energy_mean'].idxmax()].copy()
             sliced_df.loc['seed'] = str(dir).split('_seed_')[1].split('_')[0]
             # if 'lr_end' in dir:
             #     sliced_df.loc['lr_end'] = dir.split('lr_end_')[1]
@@ -72,6 +75,41 @@ def load_best_results(pattern, env_name, show_df=False,
     print(f"${total_df['energy_mean'].mean():.3f} \pm {total_df['energy_mean'].std():.3f}$")
     return total_df
 
+def load_full_results(pattern, show_df=False,
+              max_steps=None, verbose=False, logdir=None):
+    if logdir is None:
+        package_path = Path(__file__).parent.parent.parent
+        logdir = package_path / 'chkpts'
+    else:
+        logdir = Path(logdir)
+    # pattern = r".*diffv2.*noise_scale_0\.0\d$"
+    # pattern = r".*diffv2.*noise_scale_0\.09"
+    # pattern = r".*qsm.*01-07.*qsm_lr_schedule$"
+    os.makedirs(logdir, exist_ok=True)
+    matching_dir = [s for s in logdir.iterdir() if re.match(pattern, str(s))]
+    dfs = []
+    for dir in matching_dir:
+        csv_path = dir / 'energy_eval.csv'
+        df = pd.read_csv(str(csv_path))
+        if len(df) > 0:
+            df['logdir'] = str(dir)
+            dfs.append(df)
+        else:
+            continue
+    if len(dfs) == 0:
+        if verbose:
+            print(f"No results found for {pattern}")
+        return None
+    total_df = pd.concat(dfs, ignore_index=True)
+    if show_df:
+        print(total_df.to_markdown())
+    try:
+        print(f"${total_df['energy_mean'].mean():.3f} \pm {total_df['energy_mean'].std():.3f}$")
+    except:
+        print("Error calculating mean and std")
+        print(total_df.head())
+    return total_df
+
 
 
 if __name__ == "__main__":
@@ -84,10 +122,18 @@ if __name__ == "__main__":
     #                 #  'qsm_lr': r".*qsm.*01-07.*qsm_lr_schedule$",
     #                  'qsm': r".*qsm.*01-07.*atp1$"}
     # pattern = r".*reweighting_rl.*energy_func_two_gaussian.*substract_min-.*$"
-    patterns_dict = {
-        'identity': r".*reweighting_rl.*energy_func_two_gaussian.*identity.*$",
-        'quadratic': r".*reweighting_rl.*energy_func_two_gaussian.*quadratic.*$",
-        'softmax': r".*reweighting_rl.*energy_func_two_gaussian.*softmax.*$",
-    }
-    for pattern in patterns_dict.keys():
-        load_best_results(patterns_dict[pattern], pattern)
+    
+    # patterns_dict = {
+    #     'identity': r".*reweighting_rl.*energy_func_two_gaussian.*identity.*$",
+    #     'quadratic': r".*reweighting_rl.*energy_func_two_gaussian.*quadratic.*$",
+    #     'softmax': r".*reweighting_rl.*energy_func_two_gaussian.*softmax.*$",
+    # }
+    # for pattern in patterns_dict.keys():
+    #     load_best_results(patterns_dict[pattern], pattern)
+    
+    logdir = '/home/naliseas-workstation/Documents/haitong/diffusion-model-hallucination/chkpts/sweep_energy_fn_kwargs_l'
+    pattern = r".*reweighting_rl.*energy_fn_kwargs_l_0\.8.*relu_normalize.*$"
+    df = load_full_results(pattern, logdir=logdir)
+    print(df.head())
+    print(df.tail())
+    print(df.shape)

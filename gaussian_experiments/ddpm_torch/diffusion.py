@@ -4,6 +4,7 @@ import torch
 from .functions import normal_kl, discretized_gaussian_loglik, flat_mean
 import copy
 import numpy as np
+import wandb
 
 # add the grandparent directory to the path
 import os
@@ -114,9 +115,9 @@ class GaussianDiffusion:
         # "standardize-softmax" -> softmax(standardize(x))
         def _compose_transforms(fns):
 
-            def _transform(weights):
+            def _transform(weights, temperature=1.0, **kwargs):
                 for fn in fns:
-                    weights = fn(weights)
+                    weights = fn(weights, temperature, **kwargs)
                 return weights
 
             return _transform
@@ -131,9 +132,13 @@ class GaussianDiffusion:
         self.reweighting_rl_warmup_epochs = kwargs.get(
             'reweighting_rl_warmup_epochs', 50)
         self.step_count = 0
+        
+        self.temperature = kwargs.get('temperature', 1.0)
 
         self.sampling_results = {}
-
+        self.energy_fn_kwargs = kwargs.get('energy_fn_kwargs', {})
+        self.weights_kwargs = kwargs.get('weights_kwargs', {})
+        
     def log_expectation_reward(
         self,
         t: torch.Tensor,
@@ -503,6 +508,12 @@ class GaussianDiffusion:
 
         elif self.loss_type == "reweighting_rl":
 
+            energy_fn_kwargs = self.energy_fn_kwargs
+            weights_kwargs = self.weights_kwargs
+            if energy_fn_kwargs is None:
+                energy_fn_kwargs = {}
+            if weights_kwargs is None:
+                weights_kwargs = {}
             assert self.energy_fn is not None
             # sampling with the current policy
             if epoch is not None and epoch < self.reweighting_rl_warmup_epochs:
@@ -520,7 +531,8 @@ class GaussianDiffusion:
                     sample_x0 = sample_x0 + torch.randn_like(
                         sample_x0) * self.sample_x0_noise_std
                 sample_xt = self.q_sample(sample_x0, t, noise=noise)
-                weights = self.weights_transform_fn(self.energy_fn(sample_x0))
+                weights_kwargs.update(temperature=self.temperature)
+                weights = self.weights_transform_fn(self.energy_fn(sample_x0, **energy_fn_kwargs), **weights_kwargs)
 
             if weights.ndim == 1:
                 weights = weights.unsqueeze(
@@ -536,11 +548,44 @@ class GaussianDiffusion:
             else:
                 raise NotImplementedError(self.model_mean_type)
             model_out = denoise_fn(sample_xt, t)
+            # print("weights: ", weights.shape)
+            # print("target: ", target.shape)
+            # print("model_out: ", model_out.shape)
             losses = flat_mean(weights * (target - model_out).pow(2))
         else:
             raise NotImplementedError(self.loss_type)
         self.step_count += 1
-        return losses, torch.linalg.norm(model_out, axis=1).mean().item()
+        info = {
+            "loss": losses.mean().item(),
+        }
+        if 'model_out' in locals():
+            info["model_out_norm"] = torch.linalg.norm(model_out, axis=1).mean().item()
+        if 'weights' in locals():
+            info.update({
+                "weights/mean": weights.mean().item(),
+                "weights/max": weights.max().item(),
+                "weights/min": weights.min().item(),
+                "weights/std": weights.std().item(),
+            })
+        if 'energy' in locals():
+            info.update({
+                "energy/mean": energy.mean().item(),
+                "energy/max": energy.max().item(),
+                "energy/min": energy.min().item(),
+            })
+        if 'score' in locals():
+            info.update({
+                "score/norm": torch.linalg.norm(score, axis=1).mean().item()
+            })
+        if 'sample_x0' in locals():
+            info.update({
+                "sample_x0/mean": sample_x0.mean().item(),
+                "sample_x0/std": sample_x0.std().item(),
+            })
+            
+        if wandb.run is not None:
+            wandb.log(info)
+        return losses, info
 
     def _prior_bpd(self, x_0):
         B, T = len(x_0), self.timesteps

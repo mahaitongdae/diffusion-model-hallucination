@@ -6,6 +6,12 @@ def norm(x):
         return torch.norm(x, dim=1)
     else:
         return np.linalg.norm(x, axis=1)
+    
+def abs(x):
+    if isinstance(x, torch.Tensor):
+        return torch.abs(x)
+    else:
+        return np.abs(x)
 
 def clip(x, min=0., max=1.):
     if isinstance(x, torch.Tensor):
@@ -39,19 +45,35 @@ def energy_func_linear(x):
     return -norm(x) + 1.
 
 @EnergyFunctionsRegistry.register
-def energy_func_two_gaussian(x, l=1):
+def energy_func_two_gaussian(x, l=1.2, a1=0.3, a2=0.7):
     if x.ndim == 1:
         if isinstance(x, torch.Tensor):
             x = x.unsqueeze(1)
         else:
             x = x[:, np.newaxis]
     if isinstance(x, torch.Tensor):
-        energy = 0.2 * torch.exp(-norm(x)**2 /
-                                 (l**2)) + 0.8 * torch.exp(-norm(x - 3.)**2 /
+        energy = a1 * torch.exp(-norm(x)**2 /
+                                 (l**2)) + a2 * torch.exp(-norm(x - 3.)**2 /
                                                            (l**2))
     else:
-        energy = 0.2 * np.exp(-norm(x)**2 /
-                              (l**2)) + 0.8 * np.exp(-norm(x - 3.)**2 / (l**2))
+        energy = a1 * np.exp(-norm(x)**2 /
+                              (l**2)) + a2 * np.exp(-norm(x - 3.)**2 / (l**2))
+    return energy
+
+@EnergyFunctionsRegistry.register
+def energy_func_two_cusps(x, l=0.8, a1=0.3, a2=0.7):
+    if x.ndim == 1:
+        if isinstance(x, torch.Tensor):
+            x = x.unsqueeze(1)
+        else:
+            x = x[:, np.newaxis]
+    if isinstance(x, torch.Tensor):
+        energy = a1 * torch.exp(-abs(x) /
+                                 (l**2)) + a2 * torch.exp(-abs(x - 3.) /
+                                                           (l**2))
+    else:
+        energy = a1 * np.exp(-abs(x) /
+                              (l**2)) + a2 * np.exp(-abs(x - 3.) / (l**2))
     return energy
 
 @EnergyFunctionsRegistry.register
@@ -145,18 +167,24 @@ def plot_energy_functions_3d():
 def plot_energy_functions_2d(bounds=[-6, 6]):
     import matplotlib.pyplot as plt
     x = np.linspace(bounds[0], bounds[1], 1000)
-    fig, axs = plt.subplots(1, 6)
+    fig, axs = plt.subplots(1, 7, figsize=(20, 5))
     axs[0].plot(x, energy_func_linear(x))
     axs[1].plot(x, energy_func_quadratic(x))
     axs[2].plot(x, energy_func_exponential(x))
     axs[3].plot(x, energy_func_negative_quadratic(x))
     axs[4].plot(x, energy_function_exponential_negative_quadratic(x))
     axs[5].plot(x, energy_func_two_gaussian(x))
-    plt.show()
+    axs[6].plot(x, energy_func_two_cusps(x))
+    # plt.show()
+    plt.savefig("energy_functions_2d.pdf", dpi=300)
 
+def get_best_possible_val(energy_fn):
+    x = np.linspace(-10, 10, 1000)
+    return energy_fn(x).max()
 
 
 if __name__ == "__main__":
     plot_energy_functions_2d()
     # print(EnergyFunctionsRegistry.energy_functions)
     # print(EnergyFunctionsRegistry.get("energy_func_linear_clip")(np.array([1, 2, 3])))
+    # print(get_best_possible_val(EnergyFunctionsRegistry.get("energy_func_two_gaussian"))

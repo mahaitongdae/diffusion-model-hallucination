@@ -5,7 +5,7 @@ from sklearn.datasets import make_swiss_roll
 from torch.utils.data import Dataset
 import random
 
-__all__ = ["Gaussian8", "Gaussian25", "SwissRoll", "DataStreamer", "GenToyDataset", "Gaussian1D", "TwoMoonsToyData"]
+__all__ = ["Gaussian8", "Gaussian25", "SwissRoll", "DataStreamer", "GenToyDataset", "Gaussian1D", "Gaussian1DV2", "TwoMoonsToyData"]
 
 
 class ToyDataset(Dataset):
@@ -13,6 +13,7 @@ class ToyDataset(Dataset):
         self.size = size
         self.noise = stdev
         self.random_state = random_state
+        self.rng = np.random.default_rng(self.random_state)
         self.stdev = self._calc_stdev()
         self.data = self._sample()
 
@@ -60,10 +61,9 @@ class Gaussian8(ToyDataset):
         return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 0.5)  # x-y symmetric; around 1.414
 
     def _sample(self):
-        rng = np.random.default_rng(seed=self.random_state)
-        data = self.noise * rng.standard_normal((self.size, 2), dtype=np.float32)
+        data = self.noise * self.rng.standard_normal((self.size, 2), dtype=np.float32)
         data += np.array(self.modes)[
-            np.random.choice(np.arange(8), size=self.size, replace=True)]
+            self.rng.choice(np.arange(8), size=self.size, replace=True)]
         data /= self.stdev
         return data
 
@@ -81,8 +81,7 @@ class Gaussian25(ToyDataset):
         return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 2.)
 
     def _sample(self):
-        rng = np.random.default_rng(self.random_state)
-        data = self.noise * rng.standard_normal((self.size, 2), dtype=np.float32)
+        data = self.noise * self.rng.standard_normal((self.size, 2), dtype=np.float32)
         data += np.array(self.modes)[np.arange(self.size) % 25]
         data /= self.stdev
         return data
@@ -105,8 +104,7 @@ class Gaussian25_Rotated(ToyDataset):
         return math.sqrt(self.noise ** 2 + (self.scale ** 2) * 2.)
 
     def _sample(self):
-        rng = np.random.default_rng(self.random_state)
-        data = self.noise * rng.standard_normal((self.size, 2), dtype=np.float32)
+        data = self.noise * self.rng.standard_normal((self.size, 2), dtype=np.float32)
         data += np.array(self.modes)[np.arange(self.size) % 25]
         data /= self.stdev
         return data
@@ -122,9 +120,8 @@ class Gaussian1D(ToyDataset):
         self.stdev = stdev
 
     def _sample(self):
-        rng = np.random.default_rng(self.random_state)
         # Generate samples with added noise
-        data = self.noise * rng.standard_normal(self.size, dtype=np.float32)
+        data = self.noise * self.rng.standard_normal(self.size, dtype=np.float32)
         # Assign each sample to one of the two modes
         mode_indices = np.arange(self.size) % self.num_modes
         for i, mode_index in enumerate(mode_indices):
@@ -135,17 +132,28 @@ class Gaussian1D(ToyDataset):
 
 class Uniform1D(ToyDataset):
 
-    def __init__(self, size, range=(-1, 1), random_state=1234):
+    def __init__(self, size, range=(-2, 2), random_state=1234):
         self.range = range
         super(Uniform1D, self).__init__(size,
                                         stdev=1.,
                                         random_state=random_state)
 
     def _sample(self):
-        rng = np.random.default_rng(self.random_state)
-        data = rng.uniform(low=self.range[0],
-                           high=self.range[1],
-                           size=self.size).astype(np.float32)
+        data = self.rng.uniform(low=self.range[0],
+                                high=self.range[1],
+                                size=self.size).astype(np.float32)
+        return data
+
+class Gaussian1DV2(ToyDataset):
+
+    def __init__(self, size, initial_mean=1.0, random_state=1234):
+        self.initial_mean = initial_mean
+        super(Gaussian1DV2, self).__init__(size,
+                                        stdev=1.0,
+                                        random_state=random_state)
+
+    def _sample(self):
+        data = self.rng.normal(loc=self.initial_mean, scale=1.0, size=self.size).astype(np.float32)
         return data
 
 class UnbalancedGaussian2D(ToyDataset):
@@ -163,17 +171,16 @@ class UnbalancedGaussian2D(ToyDataset):
         mean2 = [-3, -3]  # Mean of the second Gaussian
         cov2 = [[1, 0.], [0., 1]]  # Covariance of the second Gaussian
 
-        rng = np.random.default_rng(self.random_state)
         # Generate data points with an unbalanced number of samples
         n_samples1 = 0.8
         n_samples2 = 0.2
 
-        data1 = np.random.multivariate_normal(mean1, cov1, int(n_samples1*self.size))
-        data2 = np.random.multivariate_normal(mean2, cov2, int(n_samples2*self.size))
+        data1 = self.rng.multivariate_normal(mean1, cov1, int(n_samples1*self.size))
+        data2 = self.rng.multivariate_normal(mean2, cov2, int(n_samples2*self.size))
 
         # Combine the datasets
         data = np.vstack((data1, data2)).astype(np.float32)
-        np.random.shuffle(data)
+        self.rng.shuffle(data)
 
         return data
 
@@ -208,9 +215,11 @@ class SwissRoll(ToyDataset):
         return stdev
 
     def _sample(self):
+        # Use a fresh deterministic seed so repeated resamples differ but are reproducible.
+        seed = int(self.rng.integers(0, 2**32 - 1))
         data = make_swiss_roll(
             self.size, noise=self.noise,
-            random_state=self.random_state)[0][:, [0, 2]].astype(np.float32)
+            random_state=seed)[0][:, [0, 2]].astype(np.float32)
         data /= self.stdev
         return data
 
@@ -231,7 +240,7 @@ class TwoMoonsToyData(ToyDataset):
 
 class DataStreamer:
 
-    def __init__(self, dataset: ToyDataset, batch_size: int, num_batches: int, resample: bool = False, modes=None):
+    def __init__(self, dataset: ToyDataset, batch_size: int, num_batches: int, resample: bool = False, modes=None, gaussian1dv2_initial_mean=1.0):
 
         if isinstance(dataset, str):
             dataset_name = dataset
@@ -240,6 +249,8 @@ class DataStreamer:
             if dataset_name == "gaussian1d":
                 assert modes is not None, "Modes must be provided for 1D Gaussian"
                 self.dataset = dataset(size=batch_size * num_batches, random_state=None, means=modes)
+            elif dataset_name == "gaussian1dv2":
+                self.dataset = dataset(size=batch_size * num_batches, random_state=None, initial_mean=gaussian1dv2_initial_mean)
             else:
                 self.dataset = dataset(batch_size * num_batches, random_state=None)
         else:
@@ -274,6 +285,7 @@ class DataStreamer:
             "UnbalancedGaussian2D": UnbalancedGaussian2D,
             "TwoMoonsToyData": TwoMoonsToyData,
             "Uniform1d": Uniform1D,
+            "gaussian1dv2": Gaussian1DV2,
         }.get(dataset, None)
 
 
